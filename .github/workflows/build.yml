@@ -1,0 +1,104 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+
+      - name: Install npm dependencies
+        run: |
+          npm install
+          npm install --save-dev @capacitor/assets
+
+      # ⬇️ FAIL-FAST: билд упадёт если ассетов нет (раньше он просто продолжался)
+      - name: Verify Assets (fail-fast)
+        run: |
+          echo "=== Содержимое assets ==="
+          if [ ! -d assets ]; then
+            echo "❌ ERROR: папка assets/ не найдена в корне репозитория"
+            exit 1
+          fi
+          ls -la assets/
+          echo ""
+          if [ ! -f assets/icon-only.png ]; then
+            echo "❌ ERROR: assets/icon-only.png не найден"
+            exit 1
+          fi
+          if [ ! -f assets/splash.png ]; then
+            echo "❌ ERROR: assets/splash.png не найден"
+            exit 1
+          fi
+          echo "=== Размеры файлов ==="
+          file assets/icon-only.png
+          file assets/splash.png
+          echo ""
+          echo "=== Адаптивные иконки (опционально, но настоятельно рекомендуется) ==="
+          [ -f assets/icon-foreground.png ] && file assets/icon-foreground.png || echo "⚠️ Нет icon-foreground.png — на Android 8+ будет стандартная иконка!"
+          [ -f assets/icon-background.png ] && file assets/icon-background.png || echo "⚠️ Нет icon-background.png — на Android 8+ будет стандартная иконка!"
+
+      - name: Add Android platform
+        run: npx cap add android
+
+      - name: Generate app icon & splash
+        run: |
+          echo "=== Генерация иконок ==="
+          npx @capacitor/assets generate --android
+          echo ""
+          echo "=== Что сгенерировалось: mipmap-* ==="
+          ls -la android/app/src/main/res/ | grep mipmap || true
+          echo ""
+          echo "=== mipmap-xxxhdpi (legacy) ==="
+          ls -la android/app/src/main/res/mipmap-xxxhdpi/ 2>/dev/null || echo "❌ mipmap-xxxhdpi пустая или отсутствует"
+          echo ""
+          echo "=== mipmap-anydpi-v26 (adaptive) ==="
+          ls -la android/app/src/main/res/mipmap-anydpi-v26/ 2>/dev/null || echo "❌ mipmap-anydpi-v26 отсутствует — адаптивных иконок нет!"
+          echo ""
+          echo "=== AndroidManifest: ссылки на иконки ==="
+          grep -E 'android:icon|android:roundIcon' android/app/src/main/AndroidManifest.xml || echo "❌ Иконки не прописаны в манифесте!"
+
+      - name: Sync web assets
+        run: npx cap sync android
+
+      - name: Enable largeHeap in AndroidManifest
+        run: |
+          MANIFEST=android/app/src/main/AndroidManifest.xml
+          if ! grep -q 'largeHeap' "$MANIFEST"; then
+            sed -i 's|<application|<application android:largeHeap="true"|' "$MANIFEST"
+          fi
+
+      - name: Build Debug APK
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug --stacktrace
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Krypta-Debug-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 30
