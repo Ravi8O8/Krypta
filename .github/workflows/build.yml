@@ -34,7 +34,6 @@ jobs:
           npm install
           npm install --save-dev @capacitor/assets
 
-      # ⬇️ FAIL-FAST: билд упадёт если ассетов нет (раньше он просто продолжался)
       - name: Verify Assets (fail-fast)
         run: |
           echo "=== Содержимое assets ==="
@@ -56,12 +55,21 @@ jobs:
           file assets/icon-only.png
           file assets/splash.png
           echo ""
-          echo "=== Адаптивные иконки (опционально, но настоятельно рекомендуется) ==="
-          [ -f assets/icon-foreground.png ] && file assets/icon-foreground.png || echo "⚠️ Нет icon-foreground.png — на Android 8+ будет стандартная иконка!"
-          [ -f assets/icon-background.png ] && file assets/icon-background.png || echo "⚠️ Нет icon-background.png — на Android 8+ будет стандартная иконка!"
+          echo "=== Адаптивные иконки (опционально) ==="
+          [ -f assets/icon-foreground.png ] && file assets/icon-foreground.png || echo "⚠️ Нет icon-foreground.png"
+          [ -f assets/icon-background.png ] && file assets/icon-background.png || echo "⚠️ Нет icon-background.png"
 
       - name: Add Android platform
         run: npx cap add android
+
+      - name: Set version from package.json
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          CODE=$(echo "$VERSION" | awk -F. '{printf "%d%02d%02d", $1, $2, $3}')
+          sed -i "s/versionCode 1/versionCode $CODE/" android/app/build.gradle
+          sed -i "s/versionName \"1.0\"/versionName \"$VERSION\"/" android/app/build.gradle
+          echo "=== Итоговые версии в build.gradle ==="
+          grep -E 'versionCode|versionName' android/app/build.gradle
 
       - name: Generate app icon & splash
         run: |
@@ -75,7 +83,7 @@ jobs:
           ls -la android/app/src/main/res/mipmap-xxxhdpi/ 2>/dev/null || echo "❌ mipmap-xxxhdpi пустая или отсутствует"
           echo ""
           echo "=== mipmap-anydpi-v26 (adaptive) ==="
-          ls -la android/app/src/main/res/mipmap-anydpi-v26/ 2>/dev/null || echo "❌ mipmap-anydpi-v26 отсутствует — адаптивных иконок нет!"
+          ls -la android/app/src/main/res/mipmap-anydpi-v26/ 2>/dev/null || echo "❌ mipmap-anydpi-v26 отсутствует"
           echo ""
           echo "=== AndroidManifest: ссылки на иконки ==="
           grep -E 'android:icon|android:roundIcon' android/app/src/main/AndroidManifest.xml || echo "❌ Иконки не прописаны в манифесте!"
