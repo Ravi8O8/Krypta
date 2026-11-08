@@ -198,6 +198,9 @@ const nextMacrotask = (() => {
   });
 })();
 
+// ============================================================
+// KEEP-ALIVE (v1.0.4.1) — предотвращает троттлинг Chromium
+// ============================================================
 let _kaEl = null, _kaRaf = null, _kaRunning = false, _kaI = 0;
 function startKeepAlive() {
   if (_kaRunning) return;
@@ -280,6 +283,9 @@ function hideProgress() {
   stopKeepAlive();
 }
 
+// ============================================================
+// TOAST + UNDO
+// ============================================================
 let pendingUndo = null;
 
 function toast(title, sub='', isError=false) {
@@ -361,7 +367,6 @@ function isCapacitorNative() {
 }
 
 async function createOutputStream(filename) {
-  // 1) Веб с File System Access API
   if (window.showSaveFilePicker && !isCapacitorNative()) {
     try {
       const handle = await window.showSaveFilePicker({ suggestedName: filename });
@@ -378,7 +383,6 @@ async function createOutputStream(filename) {
     }
   }
 
-  // 2) Capacitor — чанковая запись на диск
   if (isCapacitorNative()) {
     try {
       const { Filesystem } = window.Capacitor.Plugins;
@@ -1128,6 +1132,28 @@ async function saveToOPFSChunked(fileId, file) {
     await writable.close();
     return true;
   } catch(e) { console.error('Save OPFS error', e); return false; }
+}
+
+async function writeDataToOPFS(fileId, data) {
+  if (!rootDir) return false;
+  try {
+    const fh = await rootDir.getFileHandle(fileId, { create: true });
+    const wr = await fh.createWritable();
+    const CHUNK = 4 * 1024 * 1024;
+    if (data.length <= CHUNK) {
+      await wr.write(data);
+    } else {
+      for (let off = 0; off < data.length; off += CHUNK) {
+        await wr.write(data.subarray(off, Math.min(off + CHUNK, data.length)));
+        await nextMacrotask();
+      }
+    }
+    await wr.close();
+    return true;
+  } catch (e) {
+    console.error('writeDataToOPFS error', e);
+    return false;
+  }
 }
 
 function openDB() {
@@ -3189,6 +3215,9 @@ window.importFromArchive = async (input) => {
     const existingHashes = new Set(existingFiles.filter(f => !f.deleted).map(f => f.hash).filter(h => h && !h.startsWith('unique_')));
 
     let imported = 0, skipped = 0, failed = 0;
+    let bytesImported = 0;
+    const t0 = performance.now();
+    const MAX_IN_MEMORY = 80 * 1024 * 1024;
 
     for (let i = 0; i < mediaEntries.length; i++) {
       const entry = mediaEntries[i];
@@ -3208,53 +3237,64 @@ window.importFromArchive = async (input) => {
         const ext = fileName.split('.').pop().toLowerCase();
         const mime = ARCHIVE_MIME_MAP[ext] || '';
         const fileId = generateId();
+        const sizeMB = entry.uncompSize / 1048576;
 
-        if (rootDir) {
-          await extractEntryToOPFS(zipInfo, entry, fileId);
-          const fileObj = await getFromOPFS(fileId);
-          if (!fileObj) { failed++; continue; }
+        if (entry.uncompSize <= MAX_IN_MEMORY) {
+          const data = await extractEntryToBuffer(zipInfo, entry);
+          if (!data || data.length === 0) { failed++; continue; }
+
+          const fileObj = new File([data], fileName, { type: mime });
 
           let hash = '';
           try { hash = await calculateHash(fileObj); } catch(e) {}
-          if (hash && existingHashes.has(hash)) { await deleteFromOPFS(fileId); skipped++; continue; }
+          if (hash && existingHashes.has(hash)) { skipped++; continue; }
 
           const type = detectType(fileObj);
           const record = {
             fileId, name: fileName, type, mime,
-            size: entry.uncompSize, date: Date.now(),
+            size: data.length, date: Date.now(),
             folderId: targetFolderId, hash,
             deleted: false, deletedAt: null, fav: false, tags: []
           };
 
-          const sizeMB = entry.uncompSize / 1048576;
-          const skipThumb = (type === 'image' && sizeMB > 15) || (type === 'video' && sizeMB > 30);
-          if (!skipThumb && (type === 'image' || type === 'video')) {
-            try {
-              const thumbBlob = type === 'image'
-                ? await generateImageThumbnail(fileObj)
-                 : await generateVideoThumbnail(fileObj);
-               if (thumbBlob) await saveThumb(fileId, thumbBlob);
-             } catch(e) {}
+          if (rootDir) {
+            const ok = await writeDataToOPFS(fileId, data);
+            if (!ok) { failed++; continue; }
+
+            const skipThumb = (type === 'image' && sizeMB > 15) || (type === 'video' && sizeMB > 30);
+            if (!skipThumb && (type === 'image' || type === 'video')) {
+              try {
+                const thumbBlob = type === 'image'
+                  ? await generateImageThumbnail(fileObj)
+                  : await generateVideoThumbnail(fileObj);
+                if (thumbBlob) await saveThumb(fileId, thumbBlob);
+              } catch(e) {}
+            }
+          } else {
+            record.blob = fileObj;
           }
 
           await p(st(SF, 'readwrite').add(record));
           if (hash && !hash.startsWith('unique_')) existingHashes.add(hash);
           imported++;
+          bytesImported += data.length;
+
         } else {
-          const data = await extractEntryToBuffer(zipInfo, entry);
-          const fileObj = new File([data], fileName, { type: mime });
-          const hash = await calculateHash(fileObj);
-          if (hash && existingHashes.has(hash)) { skipped++; continue; }
-          const type = detectType(fileObj);
-          await p(st(SF, 'readwrite').add({
+          if (!rootDir) { failed++; continue; }
+
+          await extractEntryToOPFS(zipInfo, entry, fileId);
+
+          const type = mime.startsWith('video/') ? 'video' : 'image';
+          const record = {
             fileId, name: fileName, type, mime,
-            size: data.length, date: Date.now(),
-            folderId: targetFolderId, hash,
-            deleted: false, deletedAt: null, fav: false, tags: [],
-            blob: fileObj
-          }));
-          if (hash && !hash.startsWith('unique_')) existingHashes.add(hash);
+            size: entry.uncompSize, date: Date.now(),
+            folderId: targetFolderId, hash: '',
+            deleted: false, deletedAt: null, fav: false, tags: []
+          };
+
+          await p(st(SF, 'readwrite').add(record));
           imported++;
+          bytesImported += entry.uncompSize;
         }
       } catch (err) {
         console.error('Archive import error', entry.name, err);
@@ -3262,9 +3302,13 @@ window.importFromArchive = async (input) => {
       }
     }
 
+    const elapsed = (performance.now() - t0) / 1000;
+    const speed = elapsed > 0 ? (bytesImported / 1048576) / elapsed : 0;
+
     hideProgress();
     await refresh();
-    toast('Импорт завершён', `Добавлено: ${imported} · Пропущено: ${skipped} · Ошибок: ${failed}`);
+    toast('Импорт завершён',
+      `${imported} файл. за ${elapsed.toFixed(0)} сек · ${speed.toFixed(1)} МБ/с · пропущено ${skipped} · ошибок ${failed}`);
   } catch (e) {
     console.error(e);
     hideProgress();
