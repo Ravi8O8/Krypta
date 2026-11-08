@@ -209,7 +209,11 @@ const imageLoader = new IntersectionObserver((entries) => {
   entries.forEach(entry => {
     const el = entry.target;
     if (entry.isIntersecting) {
-      if (!el._blobUrl && !el._loading) loadTileImage(el);
+      if (el.dataset.type === 'folder') {
+        if (!el._previewLoaded) loadFolderPreview(Number(el.dataset.id), el);
+      } else {
+        if (!el._blobUrl && !el._loading) loadTileImage(el);
+      }
     } else {
       const imgEl = el.querySelector('.tile-img');
       if (el._blobUrl && imgEl && imgEl.classList.contains('loaded')) {
@@ -237,11 +241,61 @@ function showProgress(title, percent, file, eta) {
   $('progressDrawer').classList.add('on');
 }
 function hideProgress() { $('progressDrawer').classList.remove('on'); }
+
+// ============================================================
+// TOAST + UNDO
+// ============================================================
+let pendingUndo = null;
+
 function toast(title, sub='', isError=false) {
+  if (pendingUndo) {
+    clearTimeout(pendingUndo.timer);
+    pendingUndo = null;
+  }
   const t = $('toast');
+  t.classList.remove('with-action');
   t.innerHTML = `<div class="toast-title ${isError?'error':''}">${escapeHtml(title)}</div><div class="toast-sub">${escapeHtml(sub)}</div>`;
   t.classList.add('on'); clearTimeout(t._h); t._h = setTimeout(()=>t.classList.remove('on'), 4000);
   if (isError) playSound('error'); else playSound('success');
+}
+
+function showUndoToast(title, sub, onUndo, duration = 5000) {
+  if (pendingUndo) {
+    clearTimeout(pendingUndo.timer);
+    pendingUndo = null;
+  }
+  const t = $('toast');
+  t.innerHTML = `
+    <div class="toast-title">${escapeHtml(title)}</div>
+    ${sub ? `<div class="toast-sub">${escapeHtml(sub)}</div>` : ''}
+    <button type="button" class="toast-action" id="toastUndoBtn">Отменить</button>
+  `;
+  t.classList.add('on', 'with-action');
+  clearTimeout(t._h);
+
+  const btn = t.querySelector('#toastUndoBtn');
+  let executed = false;
+
+  const doUndo = async () => {
+    if (executed) return;
+    executed = true;
+    if (pendingUndo) { clearTimeout(pendingUndo.timer); pendingUndo = null; }
+    t.classList.remove('on', 'with-action');
+    try { await onUndo(); }
+    catch (e) { console.error(e); toast('Ошибка', 'Не удалось отменить', true); }
+  };
+
+  btn.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    doUndo();
+  });
+
+  const timer = setTimeout(() => {
+    pendingUndo = null;
+    t.classList.remove('on', 'with-action');
+  }, duration);
+
+  pendingUndo = { timer, doUndo, executed: false };
 }
 
 function showConfirm(title, text, okText = 'ОК', cancelText = 'Отмена') {
@@ -264,7 +318,7 @@ const CRC_TABLE = (() => {
 })();
 
 // ================================================================
-// СОЗДАНИЕ ZIP (ПОТОКОВОЕ, БЕЗ OOM)
+// СОЗДАНИЕ ZIP
 // ================================================================
 async function createZip(files) {
   const encoder = new TextEncoder(); 
@@ -505,6 +559,38 @@ async function processBgThumbQueue() {
     await nextMacrotask();
   }
   bgThumbRunning = false;
+}
+
+async function loadFolderPreview(folderId, tileEl) {
+  if (tileEl._previewLoaded) return;
+  tileEl._previewLoaded = true;
+  try {
+    const tx = db.transaction(SF, 'readonly');
+    const index = tx.objectStore(SF).index('folder');
+    const files = await p(index.getAll(folderId));
+    const valid = files.filter(f => !f.deleted && (f.type === 'image' || f.type === 'video')).slice(0, 4);
+    if (valid.length === 0) return;
+    const previewEl = tileEl.querySelector('.folder-preview');
+    if (!previewEl) return;
+    let loaded = 0;
+    for (const f of valid) {
+      const thumb = await getThumb(f);
+      if (thumb) {
+        const url = URL.createObjectURL(thumb);
+        const item = document.createElement('div');
+        item.className = 'fp-item';
+        item.innerHTML = `<img src="${url}" loading="lazy">`;
+        previewEl.appendChild(item);
+        loaded++;
+        if (!tileEl._previewUrls) tileEl._previewUrls = [];
+        tileEl._previewUrls.push(url);
+      }
+    }
+    if (loaded > 0) {
+      tileEl.classList.remove('no-preview');
+      tileEl.classList.add('has-preview');
+    }
+  } catch(e) { console.warn('Folder preview error', e); }
 }
 
 async function applyBackground(bgFile = undefined) {
@@ -1104,9 +1190,6 @@ async function blobToBase64(blob) {
   });
 }
 
-// ================================================================
-// ЗАПИСЬ BLOB В КЭШ КУСКАМИ (ИСПРАВЛЕНО НА 'CACHE')
-// ================================================================
 async function writeBlobToCacheChunked(blob, cachePath, onProgress) {
   const { Filesystem } = window.Capacitor.Plugins;
   const CHUNK_SIZE = 4 * 1024 * 1024;
@@ -1146,9 +1229,6 @@ async function writeBlobToCacheChunked(blob, cachePath, onProgress) {
   }
 }
 
-// ================================================================
-// СКАЧИВАНИЕ (ИСПРАВЛЕНО НА 'CACHE')
-// ================================================================
 async function downloadFileSafe(file, filename) {
   if (window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform()) {
     try {
@@ -1305,17 +1385,27 @@ async function renderViewer() {
   $('viewerInfo').onclick = () => { showInfo('file', f); };
   $('viewerDelete').onclick = async () => {
     if (!await showConfirm('В корзину', `Переместить "${f.name}" в корзину?`, 'Да', 'Нет')) return;
-    await moveToTrash([f.id], []);
-    galleryFiles.splice(currentGalleryIndex, 1);
-    if (galleryFiles.length === 0) {
-      $('viewerClose').click();
-      toast('Готово', 'Файл в корзине');
-    } else {
-      if (currentGalleryIndex >= galleryFiles.length) currentGalleryIndex = galleryFiles.length - 1;
-      await renderViewer();
-      toast('Готово', 'Файл в корзине');
+    try {
+      await moveToTrash([f.id], []);
+      galleryFiles.splice(currentGalleryIndex, 1);
+      if (galleryFiles.length === 0) {
+        $('viewerClose').click();
+      } else {
+        if (currentGalleryIndex >= galleryFiles.length) currentGalleryIndex = galleryFiles.length - 1;
+        await renderViewer();
+      }
+      refresh();
+      const removedName = f.name;
+      const removedId = f.id;
+      showUndoToast('В корзине', removedName, async () => {
+        await restoreFromTrash([removedId], []);
+        await refresh();
+        toast('Восстановлено', 'Файл возвращён');
+      });
+    } catch(e) {
+      console.error(e);
+      toast('Ошибка', 'Не удалось', true);
     }
-    refresh();
   };
   content.innerHTML=''; modal.classList.add('on');
   const container = document.createElement('div');
@@ -1562,6 +1652,10 @@ function renderGrid(reset = true) {
     imageLoader.disconnect();
     $('grid').querySelectorAll('.tile').forEach(el => {
       if (el._blobUrl) { try { URL.revokeObjectURL(el._blobUrl); } catch(e) {} el._blobUrl = null; }
+      if (el._previewUrls) {
+        el._previewUrls.forEach(u => { try { URL.revokeObjectURL(u); } catch(e) {} });
+        el._previewUrls = null;
+      }
     });
     $('grid').innerHTML = ''; currentRenderIndex = 0; allLoaded = false;
   }
@@ -1603,11 +1697,20 @@ function renderGrid(reset = true) {
   if (foldersToRender.length === 0 && filesToRender.length === 0) { allLoaded = true; return; }
   for(const f of foldersToRender) {
     const el = document.createElement('div');
-    el.className = 'tile folder' + (folderSel.has(f.id)?' sel':'') + (f.deleted?' trashed':'');
+    el.className = 'tile folder no-preview' + (folderSel.has(f.id)?' sel':'') + (f.deleted?' trashed':'');
     el.dataset.id = f.id; el.dataset.type = 'folder';
     const folderColor = f.color || 'var(--acc)';
-    el.innerHTML = `<div class="body"><svg class="folder-svg" style="color:${folderColor};" viewBox="0 0 24 24"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg><div class="lbl n">${escapeHtml(f.name)}</div></div>${f.deleted?'<div class="badge trash">Удалено</div>':''}<div class="chk"></div>`;
+    el.innerHTML = `
+      <div class="folder-preview"></div>
+      <div class="body">
+        <svg class="folder-svg" style="color:${folderColor};" viewBox="0 0 24 24"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>
+        <div class="lbl n">${escapeHtml(f.name)}</div>
+      </div>
+      ${f.deleted?'<div class="badge trash">Удалено</div>':''}
+      <div class="chk"></div>
+    `;
     frag.appendChild(el);
+    imageLoader.observe(el);
   }
   for(const f of filesToRender) {
     const el = document.createElement('div');
@@ -1783,6 +1886,7 @@ function updateUI() {
   const totalSel = sel.size + folderSel.size;
   const inTrash = viewMode === 'trash';
   $('bar').style.display = hasSel ? 'none' : 'flex';
+  $('btnEmptyTrash').style.display = inTrash ? 'flex' : 'none';
   $('ctxMenu').classList.toggle('on', hasSel);
   $('ctxRow1').style.display = inTrash ? 'none' : 'grid';
   $('ctxRow2').style.display = inTrash ? 'none' : 'grid';
@@ -2029,8 +2133,23 @@ $('ctxDel').onclick = async () => {
   const fid=[...sel], did=[...folderSel];
   if(!fid.length && !did.length) return;
   if(!await showConfirm('Удаление', `Переместить в корзину: <b>${fid.length}</b> файл. и <b>${did.length}</b> пап.?`)) return;
-  try { await moveToTrash(fid, did); clearSel(); await refresh(); toast('В корзине', 'Можно восстановить'); }
-  catch(e) { toast('Ошибка', 'Не удалось', true); }
+  try {
+    await moveToTrash(fid, did);
+    clearSel();
+    await refresh();
+    const total = fid.length + did.length;
+    const subText = total === 1
+      ? 'Перемещено в корзину'
+      : `${total} ${did.length ? 'объектов' : 'файлов'} в корзине`;
+    showUndoToast('В корзине', subText, async () => {
+      await restoreFromTrash(fid, did);
+      await refresh();
+      toast('Восстановлено', total === 1 ? 'Объект возвращён' : `${total} объектов возвращено`);
+    });
+  } catch(e) {
+    console.error(e);
+    toast('Ошибка', 'Не удалось', true);
+  }
 };
 $('ctxRestore').onclick = async () => {
   const fid=[...sel], did=[...folderSel];
@@ -2568,9 +2687,13 @@ window.importFromArchive = async (input) => {
     const entries = await parseZip(file);
 
     let metadata = null;
+    let basePath = '';
     for (const e of entries) {
-      if (e.name === 'metadata.json') {
-        try { metadata = JSON.parse(new TextDecoder().decode(e.data)); } catch(e) {}
+      if (e.name.endsWith('metadata.json')) {
+        try { 
+          metadata = JSON.parse(new TextDecoder().decode(e.data)); 
+          basePath = e.name.substring(0, e.name.length - 'metadata.json'.length);
+        } catch(e) {}
         break;
       }
     }
@@ -2585,11 +2708,11 @@ window.importFromArchive = async (input) => {
 
       const entryMap = new Map(entries.map(e => [e.name, e.data]));
 
-      if (entryMap.has('background.jpg')) {
+      if (entryMap.has(basePath + 'background.jpg')) {
         try {
           const fh = await rootDir.getFileHandle(BG_FILE_ID, { create: true });
           const wr = await fh.createWritable();
-          await wr.write(new Blob([entryMap.get('background.jpg')]));
+          await wr.write(new Blob([entryMap.get(basePath + 'background.jpg')]));
           await wr.close();
         } catch(e) { console.warn('BG restore failed', e); }
       }
@@ -2598,14 +2721,14 @@ window.importFromArchive = async (input) => {
       let i = 0;
       for (const f of metadata.files) {
         try {
-          const mainData = entryMap.get(`files/${f.fileId}`);
+          const mainData = entryMap.get(basePath + `files/${f.fileId}`);
           if (mainData) {
             const fh = await rootDir.getFileHandle(f.fileId, { create: true });
             const wr = await fh.createWritable();
             await wr.write(new Blob([mainData]));
             await wr.close();
           }
-          const thumbData = entryMap.get(`thumbs/${f.fileId}`);
+          const thumbData = entryMap.get(basePath + `thumbs/${f.fileId}`);
           if (thumbData) {
             const fh = await rootDir.getFileHandle(THUMB_PREFIX + f.fileId, { create: true });
             const wr = await fh.createWritable();
