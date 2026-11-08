@@ -73,6 +73,7 @@ let wakeLock = null;
 let isAppInBackground = false;
 
 let soundEnabled = true;
+let folderPreviewEnabled = true;
 let audioCtx = null;
 
 function initAudio() {
@@ -117,6 +118,17 @@ window.toggleSound = async () => {
   await setSetting('soundEnabled', soundEnabled);
   if (soundEnabled) playSound('success');
 };
+
+window.toggleFolderPreview = async () => {
+  folderPreviewEnabled = !folderPreviewEnabled;
+  const sw = document.getElementById('swFolderPreview');
+  if (sw) sw.classList.toggle('on', folderPreviewEnabled);
+  await setSetting('folderPreviewEnabled', folderPreviewEnabled);
+  renderGrid(true);
+  if (folderPreviewEnabled) toast('Превью папок', 'Включено');
+  else toast('Превью папок', 'Отключено');
+};
+
 document.addEventListener('pointerdown', (e) => {
   if (e.target.closest('button') || e.target.closest('.tab') || e.target.closest('.ctx-item') || e.target.closest('.theme-item') || e.target.closest('.font-opt') || e.target.closest('.pill') || e.target.closest('.settings-btn')) {
     if (!e.target.closest('.ck-key') && !e.target.closest('#confirmOk') && !e.target.closest('#confirmCancel')) playSound('click');
@@ -562,6 +574,7 @@ async function processBgThumbQueue() {
 }
 
 async function loadFolderPreview(folderId, tileEl) {
+  if (!folderPreviewEnabled) return;
   if (tileEl._previewLoaded) return;
   tileEl._previewLoaded = true;
   try {
@@ -1710,7 +1723,9 @@ function renderGrid(reset = true) {
       <div class="chk"></div>
     `;
     frag.appendChild(el);
-    imageLoader.observe(el);
+    if (folderPreviewEnabled) {
+      imageLoader.observe(el);
+    }
   }
   for(const f of filesToRender) {
     const el = document.createElement('div');
@@ -2580,6 +2595,8 @@ async function loadTheme() {
   updateTrashAutoPillsUI(trashDays);
   soundEnabled = s.soundEnabled !== false;
   if ($('swSound')) $('swSound').classList.toggle('on', soundEnabled);
+  folderPreviewEnabled = s.folderPreviewEnabled !== false;
+  if ($('swFolderPreview')) $('swFolderPreview').classList.toggle('on', folderPreviewEnabled);
 }
 $('btnSettings').onclick = async () => {
   $('modalSettings').classList.add('on');
