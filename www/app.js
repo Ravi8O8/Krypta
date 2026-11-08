@@ -699,28 +699,49 @@ async function extractEntryToOPFS(zipInfo, entry, fileId) {
   const lhBuf = new Uint8Array(await zipInfo.file.slice(entry.localOffset, entry.localOffset + 30).arrayBuffer());
   const lhDV = new DataView(lhBuf.buffer);
   const dataStart = entry.localOffset + 30 + lhDV.getUint16(26, true) + lhDV.getUint16(28, true);
-  const dataBlob = zipInfo.file.slice(dataStart, dataStart + entry.compSize);
 
   const fh = await rootDir.getFileHandle(fileId, { create: true });
   const writable = await fh.createWritable();
 
+  const CHUNK = 8 * 1024 * 1024;
+
   try {
     if (entry.method === 0) {
-      const reader = dataBlob.stream().getReader();
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        await writable.write(value);
+      let off = 0;
+      const total = entry.compSize;
+      while (off < total) {
+        const end = Math.min(off + CHUNK, total);
+        const chunkBlob = zipInfo.file.slice(dataStart + off, dataStart + end);
+        await writable.write(chunkBlob);
+        off = end;
+        await nextMacrotask();
       }
     } else if (entry.method === 8) {
       const ds = new DecompressionStream('deflate-raw');
+      const dataBlob = zipInfo.file.slice(dataStart, dataStart + entry.compSize);
       const pipePromise = dataBlob.stream().pipeTo(ds.writable);
       const reader = ds.readable.getReader();
+
+      let parts = [];
+      let partsSize = 0;
+      const flushParts = async () => {
+        if (partsSize === 0) return;
+        const merged = new Uint8Array(partsSize);
+        let o = 0;
+        for (const c of parts) { merged.set(c, o); o += c.length; }
+        await writable.write(merged);
+        parts = []; partsSize = 0;
+        await nextMacrotask();
+      };
+
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        await writable.write(value);
+        parts.push(value);
+        partsSize += value.length;
+        if (partsSize >= CHUNK) await flushParts();
       }
+      await flushParts();
       await pipePromise;
     } else {
       throw new Error('Неизвестный метод сжатия ' + entry.method);
@@ -3205,13 +3226,15 @@ window.importFromArchive = async (input) => {
             deleted: false, deletedAt: null, fav: false, tags: []
           };
 
-          if (type === 'image' || type === 'video') {
+          const sizeMB = entry.uncompSize / 1048576;
+          const skipThumb = (type === 'image' && sizeMB > 15) || (type === 'video' && sizeMB > 30);
+          if (!skipThumb && (type === 'image' || type === 'video')) {
             try {
               const thumbBlob = type === 'image'
                 ? await generateImageThumbnail(fileObj)
-                : await generateVideoThumbnail(fileObj);
-              if (thumbBlob) await saveThumb(fileId, thumbBlob);
-            } catch(e) {}
+                 : await generateVideoThumbnail(fileObj);
+               if (thumbBlob) await saveThumb(fileId, thumbBlob);
+             } catch(e) {}
           }
 
           await p(st(SF, 'readwrite').add(record));
