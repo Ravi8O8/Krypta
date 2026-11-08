@@ -159,26 +159,51 @@ header {
 }
 .tile img.loaded{opacity:1;}
 
+/* ===== FOLDER PREVIEWS ===== */
+.tile.folder.has-preview .body {
+  position: absolute; bottom: 0; left: 0; right: 0; z-index: 3;
+  background: linear-gradient(transparent, rgba(0,0,0,0.8));
+  padding: 20px 8px 8px;
+  align-items: flex-start;
+  border-radius: 0 0 var(--r-lg) var(--r-lg);
+  pointer-events: none;
+}
+.tile.folder.has-preview .body .folder-svg { display: none; }
+.tile.folder.has-preview .body .lbl.n { color: #fff; text-shadow: 0 1px 2px black; margin-top: auto; }
+.tile.folder.has-preview .folder-preview {
+  position: absolute; inset: 0; z-index: 1;
+  display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 2px;
+  pointer-events: none;
+}
+.tile.folder.has-preview .folder-preview .fp-item {
+  background: var(--bd); overflow: hidden;
+}
+.tile.folder.has-preview .folder-preview .fp-item img {
+  width: 100%; height: 100%; object-fit: cover; opacity: 0.9;
+  transition: opacity .2s var(--ease);
+}
+/* =========================== */
+
 .folder-svg{width:40px;height:40px;fill:currentColor;}
 .tile .lbl{font-size:11px;color:var(--mut);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;padding:0 4px;}
 .tile .lbl.n{color:var(--txt);font-weight:600;font-size:12px;letter-spacing:-0.01em;}
 .tile .chk {
   position:absolute; top:10px;right:10px; width:24px;height:24px; border-radius:50%;
-  border:2px solid #fff; background:rgba(0,0,0,.4); z-index:3; display:none; align-items:center; justify-content:center;
+  border:2px solid #fff; background:rgba(0,0,0,.4); z-index:5; display:none; align-items:center; justify-content:center;
 }
 .tile.sel .chk{display:flex;background:var(--acc);border-color:var(--acc);}
 .tile.sel .chk::after{content:"✓";font-size:12px;font-weight:900;color:#fff;}
 .tile.sel{outline:2px solid var(--acc);outline-offset:-2px;border-color:transparent;transform:scale(.96);}
 
-.tile .fav-star{position:absolute;top:10px;left:10px;color:#fbbf24;z-index:3;filter:drop-shadow(0 2px 4px rgba(0,0,0,.6));}
+.tile .fav-star{position:absolute;top:10px;left:10px;color:#fbbf24;z-index:5;filter:drop-shadow(0 2px 4px rgba(0,0,0,.6));}
 .tile .fav-star svg{width:16px;height:16px;fill:currentColor;}
 
 .badge {
   position:absolute; top:8px; right:8px; background:rgba(0,0,0,.75);
   color:#fff; font-size:9px; padding:3px 8px; border-radius:6px;
-  font-weight:700; text-transform:uppercase; letter-spacing:0.03em; z-index:2;
+  font-weight:700; text-transform:uppercase; letter-spacing:0.03em; z-index:4;
 }
-.badge.trash{background:var(--danger); top:auto; bottom:8px; left:8px; right:auto;}
+.badge.trash{background:var(--danger); top:auto; bottom:8px; left:8px; right:auto; z-index:5;}
 .tile.sel .badge { display: none; }
 
 .empty {
@@ -215,9 +240,9 @@ header {
 #bar .primary{background:var(--acc);color:#fff;flex:1.5;box-shadow:0 4px 12px rgba(var(--acc-rgb),.3);}
 #bar .primary:active{background:color-mix(in srgb,var(--acc) 85%,black);}
 #bar .danger{color:var(--danger);background:color-mix(in srgb,var(--danger) 10%,transparent);border:1px solid color-mix(in srgb,var(--danger) 20%,transparent);}
-#btnEmptyTrash{display:none;}
+#bar #btnEmptyTrash{display:none;}
 body[data-view="trash"] #btnAdd,body[data-view="trash"] #btnFolder{display:none;}
-body[data-view="trash"] #btnEmptyTrash{display:flex;flex:1;}
+body[data-view="trash"] #btnEmptyTrash{display:flex !important;flex:1;}
 
 #ctxMenu {
   position:fixed; left:0;right:0;bottom:0; z-index:100;
@@ -371,6 +396,36 @@ body[data-view="trash"] #btnEmptyTrash{display:flex;flex:1;}
 .toast-title{font-weight:700;font-size:15px;margin-bottom:2px;color:var(--acc);letter-spacing:-0.01em;}
 .toast-title.error{color:var(--danger);}
 .toast-sub{font-size:13px;color:var(--mut);}
+
+/* ===== Toast with action (Undo) ===== */
+#toast.with-action {
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+#toast.with-action.on {
+  pointer-events: auto;
+}
+#toast .toast-action {
+  background: var(--acc);
+  color: #fff;
+  padding: 10px 20px;
+  border-radius: var(--r-pill);
+  font-size: 14px;
+  font-weight: 700;
+  border: none;
+  cursor: pointer;
+  margin-top: 8px;
+  font-family: inherit;
+  letter-spacing: inherit;
+  transition: transform .15s var(--ease), background .15s var(--ease);
+}
+#toast .toast-action:active {
+  transform: scale(0.96);
+  background: color-mix(in srgb, var(--acc) 85%, black);
+}
 
 input[type=file]{display:none;}
 input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:4px;border-radius:2px;background:var(--bd);outline:none;padding:0;margin:12px 0;}
