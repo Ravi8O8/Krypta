@@ -92,8 +92,6 @@ krypta/
 
 <div align="center">
 
-### Сделано с 🔥 и
-
 <a href="https://deepseek.com">
   <img src="https://img.shields.io/badge/DeepSeek-4D6BFE?style=for-the-badge&logo=deepseek&logoColor=white" alt="DeepSeek" height="40">
 </a>
