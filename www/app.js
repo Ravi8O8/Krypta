@@ -185,7 +185,7 @@ const nextMacrotask = (() => {
   if (typeof scheduler !== 'undefined' && scheduler && typeof scheduler.postTask === 'function') {
     return () => new Promise((resolve) => {
       try {
-        scheduler.postTask(resolve, { priority: 'user-visible' });
+        scheduler.postTask(resolve, { priority: 'user-blocking' });
       } catch (e) {
         setTimeout(resolve, 0);
       }
@@ -197,6 +197,28 @@ const nextMacrotask = (() => {
     ch.port2.postMessage(0);
   });
 })();
+
+let _kaEl = null, _kaRaf = null, _kaRunning = false, _kaI = 0;
+function startKeepAlive() {
+  if (_kaRunning) return;
+  _kaRunning = true;
+  if (!_kaEl) {
+    _kaEl = document.createElement('div');
+    _kaEl.style.cssText = 'position:fixed;top:0;left:0;width:2px;height:2px;pointer-events:none;opacity:0.001;z-index:-1;will-change:transform;contain:strict;';
+    document.body.appendChild(_kaEl);
+  }
+  const tick = () => {
+    if (!_kaRunning) return;
+    _kaI = (_kaI + 1) % 2000;
+    _kaEl.style.transform = `translate3d(${_kaI}px,0,0)`;
+    _kaRaf = requestAnimationFrame(tick);
+  };
+  _kaRaf = requestAnimationFrame(tick);
+}
+function stopKeepAlive() {
+  _kaRunning = false;
+  if (_kaRaf) { cancelAnimationFrame(_kaRaf); _kaRaf = null; }
+}
 
 async function acquireWakeLock() {
   try {
@@ -248,15 +270,16 @@ const $ = id => document.getElementById(id);
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 function showProgress(title, percent, file, eta) {
+  startKeepAlive();
   $('progTitle').textContent = title; $('progPercent').textContent = percent + '%';
   $('progFill').style.width = percent + '%'; $('progFile').textContent = file; $('progEta').textContent = eta;
   $('progressDrawer').classList.add('on');
 }
-function hideProgress() { $('progressDrawer').classList.remove('on'); }
+function hideProgress() {
+  $('progressDrawer').classList.remove('on');
+  stopKeepAlive();
+}
 
-// ============================================================
-// TOAST + UNDO
-// ============================================================
 let pendingUndo = null;
 
 function toast(title, sub='', isError=false) {
@@ -329,20 +352,134 @@ const CRC_TABLE = (() => {
   return t;
 })();
 
-// ================================================================
-// СОЗДАНИЕ ZIP
-// ================================================================
-async function createZip(files) {
-  const encoder = new TextEncoder(); 
-  const localParts = [], centralParts = []; 
+// ============================================================
+// STREAMING ZIP (v1.0.4) — поддержка архивов 50+ ГБ
+// ============================================================
+
+function isCapacitorNative() {
+  return window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform();
+}
+
+async function createOutputStream(filename) {
+  // 1) Веб с File System Access API
+  if (window.showSaveFilePicker && !isCapacitorNative()) {
+    try {
+      const handle = await window.showSaveFilePicker({ suggestedName: filename });
+      const fileStream = await handle.createWritable();
+      return {
+        type: 'web',
+        write: (chunk) => fileStream.write(chunk),
+        close: async () => { await fileStream.close(); return { uri: null, name: filename, size: 0 }; },
+        abort: async () => { try { await fileStream.abort(); } catch(e) {} }
+      };
+    } catch (e) {
+      if (e.name === 'AbortError') return null;
+      console.warn('showSaveFilePicker failed:', e);
+    }
+  }
+
+  // 2) Capacitor — чанковая запись на диск
+  if (isCapacitorNative()) {
+    try {
+      const { Filesystem } = window.Capacitor.Plugins;
+      const safeName = String(filename || 'export.zip').replace(/[\/\\:*?"<>|]/g, '_');
+      const path = `export_${Date.now()}_${safeName}`;
+      const directory = 'DOCUMENTS';
+
+      try { await Filesystem.deleteFile({ path, directory }); } catch(e) {}
+
+      let buffer = [];
+      let bufferSize = 0;
+      const TARGET = 4 * 1024 * 1024;
+      let isFirst = true;
+      let writeChain = Promise.resolve();
+      let bytesWritten = 0;
+      let aborted = false;
+
+      const flush = async (force = false) => {
+        if (aborted || bufferSize === 0) return;
+        if (!force && bufferSize < TARGET) return;
+        const parts = buffer;
+        buffer = [];
+        bufferSize = 0;
+        const blob = new Blob(parts);
+        const base64 = await blobToBase64(blob);
+        if (aborted) return;
+        if (isFirst) {
+          await Filesystem.writeFile({ path, data: base64, directory, recursive: true });
+          isFirst = false;
+        } else {
+          await Filesystem.appendFile({ path, data: base64, directory });
+        }
+      };
+
+      return {
+        type: 'capacitor',
+        write: (chunk) => {
+          writeChain = writeChain.then(async () => {
+            if (aborted) return;
+            const blob = chunk instanceof Blob ? chunk : new Blob([chunk]);
+            buffer.push(blob);
+            bufferSize += blob.size;
+            bytesWritten += blob.size;
+            await flush();
+          });
+          return writeChain;
+        },
+        close: async () => {
+          await writeChain;
+          await flush(true);
+          const { uri } = await Filesystem.getUri({ path, directory });
+          return { uri, name: safeName, size: bytesWritten };
+        },
+        abort: async () => {
+          aborted = true;
+          try { await Filesystem.deleteFile({ path, directory }); } catch(e) {}
+        }
+      };
+    } catch (e) {
+      console.error('createOutputStream (native) failed:', e);
+      return null;
+    }
+  }
+
+  return null;
+}
+
+async function writeStreamingZip(writable, items, onProgress) {
+  const encoder = new TextEncoder();
+  const centralDir = [];
   let offset = 0;
-  
-  for (let i = 0; i < files.length; i++) {
-    const f = files[i];
-    const nameBytes = encoder.encode(f.name); 
-    const blob = f.blob; 
+  let lastYield = Date.now();
+  let count = 0;
+
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    let blob = item.getBlob ? await item.getBlob() : item.blob;
+    if (!blob) continue;
+
+    const nameBytes = encoder.encode(item.name);
     const size = blob.size;
-    
+
+    const lfh = new Uint8Array(30 + nameBytes.length);
+    const lfhDV = new DataView(lfh.buffer);
+    lfhDV.setUint32(0, 0x04034b50, true);
+    lfhDV.setUint16(4, 20, true);
+    lfhDV.setUint16(6, 0x0808, true);
+    lfhDV.setUint16(8, 0, true);
+    lfhDV.setUint16(10, 0, true);
+    lfhDV.setUint16(12, 0, true);
+    lfhDV.setUint32(14, 0, true);
+    lfhDV.setUint32(18, 0, true);
+    lfhDV.setUint32(22, 0, true);
+    lfhDV.setUint16(26, nameBytes.length, true);
+    lfhDV.setUint16(28, 0, true);
+    lfh.set(nameBytes, 30);
+
+    const localHeaderOffset = offset;
+    await writable.write(lfh);
+    offset += lfh.length;
+
     let crc = 0xFFFFFFFF;
     const reader = blob.stream().getReader();
     while (true) {
@@ -351,81 +488,250 @@ async function createZip(files) {
       for (let j = 0; j < value.length; j++) {
         crc = CRC_TABLE[(crc ^ value[j]) & 0xFF] ^ (crc >>> 8);
       }
-      if (value.length > 1048576) await new Promise(r => setTimeout(r, 0));
+      await writable.write(value);
+      offset += value.length;
+      const now = Date.now();
+      if (now - lastYield > 200) {
+        lastYield = now;
+        if (onProgress) onProgress(count, items.length, item.name, offset);
+        await nextMacrotask();
+      }
     }
     crc = (crc ^ 0xFFFFFFFF) >>> 0;
 
-    const lfh = new Uint8Array(30 + nameBytes.length); const dv = new DataView(lfh.buffer);
-    dv.setUint32(0,0x04034b50,true); dv.setUint16(4,20,true); dv.setUint16(6,0x0800,true); dv.setUint16(8,0,true); dv.setUint16(10,0,true); dv.setUint16(12,0,true);
-    dv.setUint32(14,crc,true); dv.setUint32(18,size,true); dv.setUint32(22,size,true); dv.setUint16(26,nameBytes.length,true); dv.setUint16(28,0,true);
-    lfh.set(nameBytes,30); 
-    localParts.push(lfh, blob);
-    
-    const cd = new Uint8Array(46 + nameBytes.length); const cdv = new DataView(cd.buffer);
-    cdv.setUint32(0,0x02014b50,true); cdv.setUint16(4,20,true); cdv.setUint16(6,20,true); cdv.setUint16(8,0x0800,true); cdv.setUint16(10,0,true); cdv.setUint16(12,0,true); cdv.setUint16(14,0,true);
-    cdv.setUint32(16,crc,true); cdv.setUint32(20,size,true); cdv.setUint32(24,size,true); cdv.setUint16(28,nameBytes.length,true);
-    cdv.setUint32(42,offset,true); cd.set(nameBytes,46); centralParts.push(cd);
-    offset += lfh.length + size;
-    
-    if (i % 10 === 0) await new Promise(resolve => setTimeout(resolve, 0));
+    const dd = new Uint8Array(16);
+    const ddDV = new DataView(dd.buffer);
+    ddDV.setUint32(0, 0x08074b50, true);
+    ddDV.setUint32(4, crc, true);
+    ddDV.setUint32(8, size, true);
+    ddDV.setUint32(12, size, true);
+    await writable.write(dd);
+    offset += 16;
+
+    const cd = new Uint8Array(46 + nameBytes.length);
+    const cdDV = new DataView(cd.buffer);
+    cdDV.setUint32(0, 0x02014b50, true);
+    cdDV.setUint16(4, 20, true);
+    cdDV.setUint16(6, 20, true);
+    cdDV.setUint16(8, 0x0808, true);
+    cdDV.setUint16(10, 0, true);
+    cdDV.setUint16(12, 0, true);
+    cdDV.setUint16(14, 0, true);
+    cdDV.setUint32(16, crc, true);
+    cdDV.setUint32(20, size, true);
+    cdDV.setUint32(24, size, true);
+    cdDV.setUint16(28, nameBytes.length, true);
+    cdDV.setUint32(42, localHeaderOffset, true);
+    cd.set(nameBytes, 46);
+    centralDir.push(cd);
+
+    count++;
+    if (item.blob) item.blob = null;
+    if (item.getBlob) item.getBlob = null;
+
+    if (onProgress) onProgress(count, items.length, item.name, offset);
+    await nextMacrotask();
   }
-  const centralSize = centralParts.reduce((s, p) => s + p.length, 0);
-  const eocd = new Uint8Array(22); const edv = new DataView(eocd.buffer);
-  edv.setUint32(0,0x06054b50,true); edv.setUint16(8,files.length,true); edv.setUint16(10,files.length,true); edv.setUint32(12,centralSize,true); edv.setUint32(16,offset,true);
-  return new Blob([...localParts, ...centralParts, eocd], { type: 'application/zip' });
+
+  const cdStart = offset;
+  for (const entry of centralDir) {
+    await writable.write(entry);
+    offset += entry.length;
+  }
+  const cdSize = offset - cdStart;
+
+  const needsZip64 = offset > 0xFFFFFFFE || cdStart > 0xFFFFFFFE || count >= 0xFFFF;
+
+  if (needsZip64) {
+    const z64Offset = offset;
+    const z64 = new Uint8Array(56);
+    const z64DV = new DataView(z64.buffer);
+    z64DV.setUint32(0, 0x06064b50, true);
+    z64DV.setBigUint64(4, 44n, true);
+    z64DV.setUint16(12, 45, true);
+    z64DV.setUint16(14, 45, true);
+    z64DV.setUint32(16, 0, true);
+    z64DV.setUint32(20, 0, true);
+    z64DV.setBigUint64(24, BigInt(count), true);
+    z64DV.setBigUint64(32, BigInt(count), true);
+    z64DV.setBigUint64(40, BigInt(cdSize), true);
+    z64DV.setBigUint64(48, BigInt(cdStart), true);
+    await writable.write(z64);
+    offset += 56;
+
+    const loc = new Uint8Array(20);
+    const locDV = new DataView(loc.buffer);
+    locDV.setUint32(0, 0x07064b50, true);
+    locDV.setUint32(4, 0, true);
+    locDV.setBigUint64(8, BigInt(z64Offset), true);
+    locDV.setUint32(16, 1, true);
+    await writable.write(loc);
+    offset += 20;
+  }
+
+  const eocd = new Uint8Array(22);
+  const eocdDV = new DataView(eocd.buffer);
+  eocdDV.setUint32(0, 0x06054b50, true);
+  eocdDV.setUint16(8, needsZip64 ? 0xFFFF : count, true);
+  eocdDV.setUint16(10, needsZip64 ? 0xFFFF : count, true);
+  eocdDV.setUint32(12, needsZip64 ? 0xFFFFFFFF : cdSize, true);
+  eocdDV.setUint32(16, needsZip64 ? 0xFFFFFFFF : cdStart, true);
+  await writable.write(eocd);
 }
 
-async function parseZip(blob) {
-  const buf = new Uint8Array(await blob.arrayBuffer());
-  const dv = new DataView(buf.buffer);
-  const files = [];
+async function parseZipStreaming(file) {
+  if (file.size < 22) throw new Error('Файл слишком мал');
+
+  const tailSize = Math.min(file.size, 65557);
+  const tailStart = file.size - tailSize;
+  const tailBuf = new Uint8Array(await file.slice(tailStart).arrayBuffer());
+
   let eocdPos = -1;
-  for (let i = buf.length - 22; i >= 0; i--) {
-    if (dv.getUint32(i, true) === 0x06054b50) { eocdPos = i; break; }
-  }
-  if (eocdPos === -1) throw new Error('Неверный ZIP архив (нет EOCD)');
-  const cdOffset = dv.getUint32(eocdPos + 16, true);
-  const cdCount = dv.getUint16(eocdPos + 10, true);
-  let pos = cdOffset;
-  for (let i = 0; i < cdCount; i++) {
-    if (dv.getUint32(pos, true) !== 0x02014b50) break;
-    const method = dv.getUint16(pos + 10, true);
-    const compSize = dv.getUint32(pos + 20, true);
-    const nameLen = dv.getUint16(pos + 28, true);
-    const extraLen = dv.getUint16(pos + 30, true);
-    const commentLen = dv.getUint16(pos + 32, true);
-    const localOffset = dv.getUint32(pos + 42, true);
-    const name = new TextDecoder().decode(buf.slice(pos + 46, pos + 46 + nameLen));
-    const lnameLen = dv.getUint16(localOffset + 26, true);
-    const lextraLen = dv.getUint16(localOffset + 28, true);
-    const dataStart = localOffset + 30 + lnameLen + lextraLen;
-    const rawData = buf.slice(dataStart, dataStart + compSize);
-    let data = rawData;
-    if (method === 8) {
-      try {
-        const ds = new DecompressionStream('deflate-raw');
-        const writer = ds.writable.getWriter();
-        writer.write(rawData); writer.close();
-        const reader = ds.readable.getReader();
-        const chunks = [];
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          chunks.push(value);
-        }
-        const totalLen = chunks.reduce((s, c) => s + c.length, 0);
-        const out = new Uint8Array(totalLen);
-        let off = 0;
-        for (const c of chunks) { out.set(c, off); off += c.length; }
-        data = out;
-      } catch(e) { console.warn('Не удалось распаковать', name, e); continue; }
-    } else if (method !== 0) {
-      console.warn('Неизвестный метод сжатия', method, name); continue;
+  for (let i = tailBuf.length - 22; i >= 0; i--) {
+    if (tailBuf[i] === 0x50 && tailBuf[i+1] === 0x4b && tailBuf[i+2] === 0x05 && tailBuf[i+3] === 0x06) {
+      eocdPos = i;
+      break;
     }
-    files.push({ name, data });
+  }
+  if (eocdPos === -1) throw new Error('Неверный ZIP (нет EOCD)');
+
+  const eocdDV = new DataView(tailBuf.buffer, eocdPos);
+  let cdCount = eocdDV.getUint16(10, true);
+  let cdSize = eocdDV.getUint32(12, true);
+  let cdOffset = eocdDV.getUint32(16, true);
+
+  if (eocdPos >= 20) {
+    const locPos = eocdPos - 20;
+    const locDV = new DataView(tailBuf.buffer, locPos);
+    if (locDV.getUint32(0, true) === 0x07064b50) {
+      const z64EocdOffset = Number(locDV.getBigUint64(8, true));
+      if (z64EocdOffset + 56 <= file.size) {
+        const z64Buf = new Uint8Array(await file.slice(z64EocdOffset, z64EocdOffset + 56).arrayBuffer());
+        const z64DV = new DataView(z64Buf.buffer);
+        if (z64DV.getUint32(0, true) === 0x06064b50) {
+          cdCount = Number(z64DV.getBigUint64(32, true));
+          cdSize = Number(z64DV.getBigUint64(40, true));
+          cdOffset = Number(z64DV.getBigUint64(48, true));
+        }
+      }
+    }
+  }
+
+  const cdBuf = new Uint8Array(await file.slice(cdOffset, cdOffset + cdSize).arrayBuffer());
+  const cdDV = new DataView(cdBuf.buffer);
+  const entries = [];
+  let pos = 0;
+
+  for (let i = 0; i < cdCount; i++) {
+    if (pos + 46 > cdBuf.length) break;
+    if (cdDV.getUint32(pos, true) !== 0x02014b50) break;
+
+    const method = cdDV.getUint16(pos + 10, true);
+    const crc = cdDV.getUint32(pos + 16, true);
+    let compSize = cdDV.getUint32(pos + 20, true);
+    let uncompSize = cdDV.getUint32(pos + 24, true);
+    const nameLen = cdDV.getUint16(pos + 28, true);
+    const extraLen = cdDV.getUint16(pos + 30, true);
+    const commentLen = cdDV.getUint16(pos + 32, true);
+    let localOffset = cdDV.getUint32(pos + 42, true);
+
+    const name = new TextDecoder().decode(cdBuf.slice(pos + 46, pos + 46 + nameLen));
+    const extra = cdBuf.slice(pos + 46 + nameLen, pos + 46 + nameLen + extraLen);
+
+    if (compSize === 0xFFFFFFFF || uncompSize === 0xFFFFFFFF || localOffset === 0xFFFFFFFF) {
+      let ep = 0;
+      while (ep + 4 <= extra.length) {
+        const tag = extra[ep] | (extra[ep+1] << 8);
+        const sz = extra[ep+2] | (extra[ep+3] << 8);
+        if (tag === 0x0001) {
+          let dp = ep + 4;
+          if (uncompSize === 0xFFFFFFFF && dp + 8 <= extra.length) {
+            uncompSize = Number(new DataView(extra.buffer, extra.byteOffset + dp, 8).getBigUint64(0, true)); dp += 8;
+          }
+          if (compSize === 0xFFFFFFFF && dp + 8 <= extra.length) {
+            compSize = Number(new DataView(extra.buffer, extra.byteOffset + dp, 8).getBigUint64(0, true)); dp += 8;
+          }
+          if (localOffset === 0xFFFFFFFF && dp + 8 <= extra.length) {
+            localOffset = Number(new DataView(extra.buffer, extra.byteOffset + dp, 8).getBigUint64(0, true)); dp += 8;
+          }
+          break;
+        }
+        ep += 4 + sz;
+      }
+    }
+
+    entries.push({ name, method, compSize, uncompSize, localOffset, crc });
     pos += 46 + nameLen + extraLen + commentLen;
   }
-  return files;
+
+  return { file, entries };
+}
+
+async function extractEntryToBuffer(zipInfo, entry) {
+  if (entry.compSize === 0 && entry.uncompSize === 0) return new Uint8Array(0);
+  const lhBuf = new Uint8Array(await zipInfo.file.slice(entry.localOffset, entry.localOffset + 30).arrayBuffer());
+  const lhDV = new DataView(lhBuf.buffer);
+  const dataStart = entry.localOffset + 30 + lhDV.getUint16(26, true) + lhDV.getUint16(28, true);
+  const dataBlob = zipInfo.file.slice(dataStart, dataStart + entry.compSize);
+
+  if (entry.method === 0) return new Uint8Array(await dataBlob.arrayBuffer());
+  if (entry.method === 8) {
+    const ds = new DecompressionStream('deflate-raw');
+    const pipePromise = dataBlob.stream().pipeTo(ds.writable);
+    const chunks = [];
+    const reader = ds.readable.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+    }
+    await pipePromise;
+    const total = chunks.reduce((s, c) => s + c.length, 0);
+    const out = new Uint8Array(total);
+    let off = 0;
+    for (const c of chunks) { out.set(c, off); off += c.length; }
+    return out;
+  }
+  throw new Error('Неизвестный метод сжатия ' + entry.method);
+}
+
+async function extractEntryToOPFS(zipInfo, entry, fileId) {
+  const lhBuf = new Uint8Array(await zipInfo.file.slice(entry.localOffset, entry.localOffset + 30).arrayBuffer());
+  const lhDV = new DataView(lhBuf.buffer);
+  const dataStart = entry.localOffset + 30 + lhDV.getUint16(26, true) + lhDV.getUint16(28, true);
+  const dataBlob = zipInfo.file.slice(dataStart, dataStart + entry.compSize);
+
+  const fh = await rootDir.getFileHandle(fileId, { create: true });
+  const writable = await fh.createWritable();
+
+  try {
+    if (entry.method === 0) {
+      const reader = dataBlob.stream().getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        await writable.write(value);
+      }
+    } else if (entry.method === 8) {
+      const ds = new DecompressionStream('deflate-raw');
+      const pipePromise = dataBlob.stream().pipeTo(ds.writable);
+      const reader = ds.readable.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        await writable.write(value);
+      }
+      await pipePromise;
+    } else {
+      throw new Error('Неизвестный метод сжатия ' + entry.method);
+    }
+    await writable.close();
+    return true;
+  } catch (e) {
+    try { await writable.abort(); } catch(_) {}
+    try { await rootDir.removeEntry(fileId); } catch(_) {}
+    throw e;
+  }
 }
 
 function sanitizeName(name) { return String(name || 'file').replace(/[\/\\:*?"<>|\x00-\x1f]/g, '_'); }
@@ -2319,9 +2625,21 @@ $('ctxDownload').onclick = async () => {
   }
 
   await acquireWakeLock();
-  showProgress('Экспорт', 0, 'Подготовка...', '');
   try {
-    const items = [];
+    const d = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    const zipName = `mediavault_export_${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}.zip`;
+
+    showProgress('Экспорт', 0, 'Подготовка...', '');
+    const stream = await createOutputStream(zipName);
+    if (!stream) {
+      hideProgress();
+      toast('Ошибка', 'Браузер не поддерживает потоковую запись в файл. Используйте APK-версию.', true);
+      releaseWakeLock();
+      return;
+    }
+
+    const rawItems = [];
     const addedFileIds = new Set();
     const usedPrefixes = new Set();
 
@@ -2341,16 +2659,14 @@ $('ctxDownload').onclick = async () => {
       });
 
       const walk = (folderId, prefix) => {
-        const files = filesByFolder.get(folderId) || [];
-        for (const f of files) {
+        const filesInFolder = filesByFolder.get(folderId) || [];
+        for (const f of filesInFolder) {
           if (addedFileIds.has(f.id)) continue;
           addedFileIds.add(f.id);
-          items.push({ zipPath: prefix + sanitizeName(f.name), file: f });
+          rawItems.push({ zipPath: prefix + sanitizeName(f.name), file: f });
         }
         const subs = byParent.get(folderId) || [];
-        for (const sub of subs) {
-          walk(sub.id, prefix + sanitizeName(sub.name) + '/');
-        }
+        for (const sub of subs) walk(sub.id, prefix + sanitizeName(sub.name) + '/');
       };
 
       for (const rootId of selectedFolderIds) {
@@ -2359,10 +2675,7 @@ $('ctxDownload').onclick = async () => {
         const baseName = sanitizeName(rootFolder.name);
         let finalPrefix = baseName;
         let counter = 2;
-        while (usedPrefixes.has(finalPrefix)) {
-          finalPrefix = `${baseName}_${counter}`;
-          counter++;
-        }
+        while (usedPrefixes.has(finalPrefix)) { finalPrefix = `${baseName}_${counter}`; counter++; }
         usedPrefixes.add(finalPrefix);
         walk(rootId, finalPrefix + '/');
       }
@@ -2371,25 +2684,17 @@ $('ctxDownload').onclick = async () => {
     for (const f of selectedFiles) {
       if (addedFileIds.has(f.id)) continue;
       addedFileIds.add(f.id);
-      items.push({ zipPath: sanitizeName(f.name || `file_${f.id}`), file: f });
+      rawItems.push({ zipPath: sanitizeName(f.name || `file_${f.id}`), file: f });
     }
 
-    if (items.length === 0) {
-      hideProgress();
-      toast('Пусто', 'Нет файлов для экспорта', true);
-      releaseWakeLock();
-      return;
+    if (rawItems.length === 0) {
+      hideProgress(); toast('Пусто', 'Нет файлов для экспорта', true);
+      releaseWakeLock(); return;
     }
 
-    const zipFiles = [], usedPaths = new Set();
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
-      showProgress('Экспорт', Math.round((i / items.length) * 90),
-        `${i+1}/${items.length}: ${item.file.name}`, '');
-      await nextMacrotask();
-      const data = await getFileData(item.file);
-      if (!data) continue;
-
+    const usedPaths = new Set();
+    const finalItems = [];
+    for (const item of rawItems) {
       let uniquePath = item.zipPath;
       if (usedPaths.has(uniquePath.toLowerCase())) {
         const slashIdx = uniquePath.lastIndexOf('/');
@@ -2405,22 +2710,35 @@ $('ctxDownload').onclick = async () => {
         }
       }
       usedPaths.add(uniquePath.toLowerCase());
-      zipFiles.push({ name: uniquePath, blob: data });
+      finalItems.push({
+        name: uniquePath,
+        getBlob: async () => await getFileData(item.file)
+      });
     }
 
-    showProgress('Экспорт', 92, 'Создание архива...', '');
-    await nextMacrotask();
-    const blob = await createZip(zipFiles);
-    const d = new Date();
-    const pad = n => String(n).padStart(2, '0');
-    const zipName = `mediavault_export_${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}.zip`;
+    showProgress('Экспорт', 0, `0/${finalItems.length}`, '');
+    await writeStreamingZip(stream, finalItems, (i, total, name, bytes) => {
+      const pct = Math.min(99, Math.round((i / total) * 100));
+      showProgress('Экспорт', pct, name || '', `${i}/${total} · ${(bytes / 1048576).toFixed(0)} МБ`);
+    });
+
+    showProgress('Экспорт', 99, 'Финализация...', '');
+    const result = await stream.close();
     hideProgress();
-    const ok = await downloadFileSafe(blob, zipName);
-    if (ok) toast('ZIP готов', `${zipFiles.length} файл. · ${(blob.size/1048576).toFixed(2)} МБ`);
-  } catch(e) {
+
+    if (result && result.uri && isCapacitorNative()) {
+      const { Share } = window.Capacitor.Plugins;
+      try {
+        await Share.share({ title: zipName, files: [result.uri], url: result.uri });
+      } catch (e) {
+        await Share.share({ title: zipName, url: result.uri });
+      }
+    }
+    toast('ZIP готов', `${finalItems.length} файл. · ${(result.size / 1048576).toFixed(2)} МБ`);
+  } catch (e) {
     console.error(e);
     hideProgress();
-    toast('Ошибка', 'Не удалось создать ZIP', true);
+    toast('Ошибка', 'Не удалось создать ZIP: ' + (e.message || e), true);
   } finally {
     releaseWakeLock();
   }
@@ -2609,56 +2927,76 @@ $('btnSettings').onclick = async () => {
 };
 
 window.exportAllData = async () => {
-  if (!await showConfirm('Экспорт', 'Создать полный архив со всеми файлами, папками и настройками?<br><br>Это может занять время.', 'Экспорт', 'Отмена')) return;
+  if (!await showConfirm('Экспорт',
+    'Создать полный архив со всеми файлами, папками и настройками?<br><br>Файлы стримятся на диск — поддерживаются любые объёмы (50+ ГБ).',
+    'Экспорт', 'Отмена')) return;
+
   await acquireWakeLock();
-  showProgress('Экспорт', 0, 'Подготовка...', '');
   try {
     const [files, folders, settings] = await Promise.all([getAllFiles(), getAllFolders(), p(st(SS, 'readonly').getAll())]);
-    const zipParts = [];
-    let step = 0;
-    const totalSteps = files.length * 2 + 3;
-    const metadata = { version: DB_VERSION, exportedAt: Date.now(), files, folders, settings };
-    zipParts.push({ name: 'metadata.json', blob: new Blob([new TextEncoder().encode(JSON.stringify(metadata))]) });
-    step++;
-    showProgress('Экспорт', Math.round((step/totalSteps)*100), 'metadata.json', '');
-    await nextMacrotask();
-    const bgFile = await getFromOPFS(BG_FILE_ID);
-    if (bgFile) {
-      try {
-        zipParts.push({ name: 'background.jpg', blob: bgFile });
-      } catch(e) {}
-    }
-    step++;
-    for (const f of files) {
-      try {
-        const mainFile = await getFromOPFS(f.fileId) || f.blob;
-        if (mainFile) {
-          zipParts.push({ name: `files/${f.fileId}`, blob: mainFile });
-        }
-      } catch(e) { console.warn('Skip file', f.name, e); }
-      step++;
-      showProgress('Экспорт', Math.round((step/totalSteps)*100), f.name, `${step}/${totalSteps}`);
-      await nextMacrotask();
-      try {
-        const thumb = await getThumb(f);
-        if (thumb) {
-          zipParts.push({ name: `thumbs/${f.fileId}`, blob: thumb });
-        }
-      } catch(e) {}
-      step++;
-      await nextMacrotask();
-    }
-    showProgress('Экспорт', 95, 'Создание архива...', '');
-    await nextMacrotask();
-    const blob = await createZip(zipParts);
     const d = new Date();
     const pad = n => String(n).padStart(2, '0');
-    const name = `mediavault_backup_${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}.zip`;
+    const zipName = `mediavault_backup_${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}.zip`;
+
+    showProgress('Экспорт', 0, 'Открытие файла...', '');
+    const stream = await createOutputStream(zipName);
+    if (!stream) {
+      hideProgress();
+      toast('Ошибка', 'Браузер не поддерживает потоковую запись в файл. Используйте APK-версию.', true);
+      releaseWakeLock();
+      return;
+    }
+
+    const items = [];
+    items.push({
+      name: 'metadata.json',
+      getBlob: async () => new Blob([new TextEncoder().encode(JSON.stringify({
+        version: DB_VERSION, exportedAt: Date.now(), files, folders, settings
+      }))])
+    });
+
+    const bgFile = await getFromOPFS(BG_FILE_ID);
+    if (bgFile) items.push({ name: 'background.jpg', blob: bgFile });
+
+    for (const f of files) {
+      items.push({
+        name: `files/${f.fileId}`,
+        getBlob: async () => (await getFromOPFS(f.fileId)) || f.blob || null
+      });
+    }
+    for (const f of files) {
+      items.push({
+        name: `thumbs/${f.fileId}`,
+        getBlob: async () => await getThumb(f)
+      });
+    }
+
+    showProgress('Экспорт', 0, 'Подготовка...', '0%');
+    await writeStreamingZip(stream, items, (i, total, name, bytes) => {
+      const pct = Math.min(99, Math.round((i / total) * 100));
+      showProgress('Экспорт', pct, name || '...', `${i}/${total} · ${(bytes / 1048576).toFixed(0)} МБ`);
+    });
+
+    showProgress('Экспорт', 99, 'Финализация...', '');
+    const result = await stream.close();
     hideProgress();
-    await downloadFileSafe(blob, name);
-    toast('Готово', `Экспортировано ${files.length} файлов (${(blob.size/1048576).toFixed(1)} МБ)`);
-  } catch(e) { console.error(e); hideProgress(); toast('Ошибка', 'Не удалось экспортировать: ' + e.message, true); }
-  finally { releaseWakeLock(); }
+
+    if (result && result.uri && isCapacitorNative()) {
+      const { Share } = window.Capacitor.Plugins;
+      try {
+        await Share.share({ title: zipName, files: [result.uri], url: result.uri });
+      } catch (e) {
+        await Share.share({ title: zipName, url: result.uri });
+      }
+    }
+    toast('Готово', `Экспортировано ${files.length} файлов (${(result.size / 1048576).toFixed(1)} МБ)`);
+  } catch (e) {
+    console.error(e);
+    hideProgress();
+    toast('Ошибка', 'Не удалось экспортировать: ' + (e.message || e), true);
+  } finally {
+    releaseWakeLock();
+  }
 };
 
 const ARCHIVE_MIME_MAP = {
@@ -2670,28 +3008,6 @@ const ARCHIVE_MIME_MAP = {
   '3gp':'video/3gpp', flv:'video/x-flv', wmv:'video/x-ms-wmv'
 };
 
-async function writeDataToOPFS(fileId, data) {
-  if (!rootDir) return false;
-  try {
-    const fh = await rootDir.getFileHandle(fileId, { create: true });
-    const wr = await fh.createWritable();
-    const CHUNK = 4 * 1024 * 1024;
-    if (data.length <= CHUNK) {
-      await wr.write(data);
-    } else {
-      for (let off = 0; off < data.length; off += CHUNK) {
-        await wr.write(data.subarray(off, Math.min(off + CHUNK, data.length)));
-        await nextMacrotask();
-      }
-    }
-    await wr.close();
-    return true;
-  } catch (e) {
-    console.error('writeDataToOPFS error', e);
-    return false;
-  }
-}
-
 window.importFromArchive = async (input) => {
   const file = input.files[0];
   if (!file) return;
@@ -2701,35 +3017,39 @@ window.importFromArchive = async (input) => {
   await nextMacrotask();
 
   try {
-    const entries = await parseZip(file);
+    const zipInfo = await parseZipStreaming(file);
+    const entries = zipInfo.entries;
 
-    let metadata = null;
-    let basePath = '';
+    let metadataEntry = null;
     for (const e of entries) {
-      if (e.name.endsWith('metadata.json')) {
-        try { 
-          metadata = JSON.parse(new TextDecoder().decode(e.data)); 
-          basePath = e.name.substring(0, e.name.length - 'metadata.json'.length);
-        } catch(e) {}
-        break;
-      }
+      if (e.name.endsWith('metadata.json')) { metadataEntry = e; break; }
     }
 
-    if (metadata && metadata.files && metadata.folders) {
-      hideProgress();
-      if (!await showConfirm('Восстановление', 'Обнаружена полная резервная копия.<br><br>Все текущие данные будут <b>заменены</b>. Продолжить?', 'Восстановить', 'Отмена')) return;
-
-      await acquireWakeLock();
-      showProgress('Импорт', 10, 'Восстановление фона...', '');
+    if (metadataEntry) {
+      showProgress('Чтение', 5, 'Разбор метаданных...', '');
       await nextMacrotask();
 
-      const entryMap = new Map(entries.map(e => [e.name, e.data]));
+      const metaData = await extractEntryToBuffer(zipInfo, metadataEntry);
+      const metadata = JSON.parse(new TextDecoder().decode(metaData));
+      if (!metadata || !metadata.files || !metadata.folders) throw new Error('Неверный формат резервной копии');
 
-      if (entryMap.has(basePath + 'background.jpg')) {
+      hideProgress();
+      if (!await showConfirm('Восстановление',
+        'Обнаружена полная резервная копия.<br><br>Все текущие данные будут <b>заменены</b>. Продолжить?',
+        'Восстановить', 'Отмена')) return;
+
+      await acquireWakeLock();
+
+      const basePath = metadataEntry.name.substring(0, metadataEntry.name.length - 'metadata.json'.length);
+      const entryMap = new Map(entries.map(e => [e.name, e]));
+
+      const bgEntry = entryMap.get(basePath + 'background.jpg');
+      if (bgEntry && rootDir) {
         try {
+          const bgData = await extractEntryToBuffer(zipInfo, bgEntry);
           const fh = await rootDir.getFileHandle(BG_FILE_ID, { create: true });
           const wr = await fh.createWritable();
-          await wr.write(new Blob([entryMap.get(basePath + 'background.jpg')]));
+          await wr.write(new Blob([bgData]));
           await wr.close();
         } catch(e) { console.warn('BG restore failed', e); }
       }
@@ -2738,23 +3058,20 @@ window.importFromArchive = async (input) => {
       let i = 0;
       for (const f of metadata.files) {
         try {
-          const mainData = entryMap.get(basePath + `files/${f.fileId}`);
-          if (mainData) {
-            const fh = await rootDir.getFileHandle(f.fileId, { create: true });
-            const wr = await fh.createWritable();
-            await wr.write(new Blob([mainData]));
-            await wr.close();
-          }
-          const thumbData = entryMap.get(basePath + `thumbs/${f.fileId}`);
-          if (thumbData) {
+          const mainEntry = entryMap.get(basePath + `files/${f.fileId}`);
+          if (mainEntry && rootDir) await extractEntryToOPFS(zipInfo, mainEntry, f.fileId);
+
+          const thumbEntry = entryMap.get(basePath + `thumbs/${f.fileId}`);
+          if (thumbEntry && rootDir) {
+            const thumbData = await extractEntryToBuffer(zipInfo, thumbEntry);
             const fh = await rootDir.getFileHandle(THUMB_PREFIX + f.fileId, { create: true });
             const wr = await fh.createWritable();
             await wr.write(new Blob([thumbData]));
             await wr.close();
           }
-        } catch(e) { console.warn('Restore failed', f.name, e); }
+        } catch (e) { console.warn('Restore failed', f.name, e); }
         i++;
-        showProgress('Импорт', 15 + Math.round((i/totalFiles)*70), f.name || `Файл ${i}`, `${i}/${totalFiles}`);
+        showProgress('Импорт', 15 + Math.round((i / totalFiles) * 70), f.name || `Файл ${i}`, `${i}/${totalFiles}`);
         if (i % 3 === 0) await nextMacrotask();
       }
 
@@ -2771,7 +3088,6 @@ window.importFromArchive = async (input) => {
       const t4 = db.transaction(SF, 'readwrite'); const s4 = t4.objectStore(SF);
       metadata.files.forEach(f => s4.put(f));
       await new Promise((res, rej) => { t4.oncomplete = res; t4.onerror = e => rej(e.target.error); });
-
       const t5 = db.transaction(SFL, 'readwrite'); const s5 = t5.objectStore(SFL);
       metadata.folders.forEach(f => s5.put(f));
       await new Promise((res, rej) => { t5.oncomplete = res; t5.onerror = e => rej(e.target.error); });
@@ -2796,12 +3112,12 @@ window.importFromArchive = async (input) => {
       'Импортировать', 'Отмена')) return;
 
     await acquireWakeLock();
-    showProgress('Импорт', 0, 'Чтение архива...', '');
+    showProgress('Импорт', 0, 'Подготовка...', '');
     await nextMacrotask();
 
     const validEntries = entries.filter(e => {
       if (!e.name || e.name.endsWith('/')) return false;
-      if (!e.data || e.data.length === 0) return false;
+      if (e.uncompSize === 0) return false;
       const parts = e.name.split('/');
       if (parts.some(p => p.startsWith('__MACOSX') || p.startsWith('.'))) return false;
       return true;
@@ -2816,20 +3132,17 @@ window.importFromArchive = async (input) => {
     if (mediaEntries.length === 0) {
       hideProgress();
       toast('Пусто', 'В архиве не найдено фото или видео', true);
-      releaseWakeLock();
-      return;
+      releaseWakeLock(); return;
     }
 
     const folderPaths = new Set();
     mediaEntries.forEach(e => {
       const parts = e.name.split('/');
       parts.pop();
-      for (let i = 1; i <= parts.length; i++) {
-        folderPaths.add(parts.slice(0, i).join('/'));
-      }
+      for (let i = 1; i <= parts.length; i++) folderPaths.add(parts.slice(0, i).join('/'));
     });
 
-    showProgress('Импорт', 5, 'Создание папок...', '');
+    showProgress('Импорт', 3, 'Создание папок...', '');
     await nextMacrotask();
 
     const existingFolders = await getAllFolders();
@@ -2841,30 +3154,18 @@ window.importFromArchive = async (input) => {
       const name = parts[parts.length - 1];
       const parentPath = parts.slice(0, -1).join('/');
       const parentId = parentPath ? folderMap.get(parentPath) : currentFolder;
-
-      const existing = existingFolders.find(
-        f => f.parentId === parentId && f.name === name && !f.deleted
-      );
-
+      const existing = existingFolders.find(f => f.parentId === parentId && f.name === name && !f.deleted);
       let folderId;
-      if (existing) {
-        folderId = existing.id;
-      } else {
-        folderId = await addFolder(
-          name, parentId,
-          FOLDER_COLORS[Math.floor(Math.random() * FOLDER_COLORS.length)]
-        );
+      if (existing) { folderId = existing.id; }
+      else {
+        folderId = await addFolder(name, parentId, FOLDER_COLORS[Math.floor(Math.random() * FOLDER_COLORS.length)]);
         existingFolders.push({ id: folderId, name, parentId: parentId ?? null, deleted: false });
       }
       folderMap.set(path, folderId);
     }
 
     const existingFiles = await getAllFiles();
-    const existingHashes = new Set(
-      existingFiles.filter(f => !f.deleted)
-        .map(f => f.hash)
-        .filter(h => h && !h.startsWith('unique_'))
-    );
+    const existingHashes = new Set(existingFiles.filter(f => !f.deleted).map(f => f.hash).filter(h => h && !h.startsWith('unique_')));
 
     let imported = 0, skipped = 0, failed = 0;
 
@@ -2885,43 +3186,53 @@ window.importFromArchive = async (input) => {
 
         const ext = fileName.split('.').pop().toLowerCase();
         const mime = ARCHIVE_MIME_MAP[ext] || '';
-        const fileObj = new File([entry.data], fileName, { type: mime });
-
-        let hash = '';
-        try { hash = await calculateHash(fileObj); } catch (e) {}
-        if (hash && existingHashes.has(hash)) {
-          skipped++;
-          continue;
-        }
-
         const fileId = generateId();
-        const type = detectType(fileObj);
-        const record = {
-          fileId, name: fileName, type, mime,
-          size: entry.data.length, date: Date.now(),
-          folderId: targetFolderId, hash,
-          deleted: false, deletedAt: null, fav: false,
-          tags: []
-        };
 
         if (rootDir) {
-          const ok = await writeDataToOPFS(fileId, entry.data);
-          if (!ok) { failed++; continue; }
+          await extractEntryToOPFS(zipInfo, entry, fileId);
+          const fileObj = await getFromOPFS(fileId);
+          if (!fileObj) { failed++; continue; }
+
+          let hash = '';
+          try { hash = await calculateHash(fileObj); } catch(e) {}
+          if (hash && existingHashes.has(hash)) { await deleteFromOPFS(fileId); skipped++; continue; }
+
+          const type = detectType(fileObj);
+          const record = {
+            fileId, name: fileName, type, mime,
+            size: entry.uncompSize, date: Date.now(),
+            folderId: targetFolderId, hash,
+            deleted: false, deletedAt: null, fav: false, tags: []
+          };
+
           if (type === 'image' || type === 'video') {
             try {
               const thumbBlob = type === 'image'
                 ? await generateImageThumbnail(fileObj)
                 : await generateVideoThumbnail(fileObj);
               if (thumbBlob) await saveThumb(fileId, thumbBlob);
-            } catch (e) {}
+            } catch(e) {}
           }
-        } else {
-          record.blob = fileObj;
-        }
 
-        await p(st(SF, 'readwrite').add(record));
-        if (hash && !hash.startsWith('unique_')) existingHashes.add(hash);
-        imported++;
+          await p(st(SF, 'readwrite').add(record));
+          if (hash && !hash.startsWith('unique_')) existingHashes.add(hash);
+          imported++;
+        } else {
+          const data = await extractEntryToBuffer(zipInfo, entry);
+          const fileObj = new File([data], fileName, { type: mime });
+          const hash = await calculateHash(fileObj);
+          if (hash && existingHashes.has(hash)) { skipped++; continue; }
+          const type = detectType(fileObj);
+          await p(st(SF, 'readwrite').add({
+            fileId, name: fileName, type, mime,
+            size: data.length, date: Date.now(),
+            folderId: targetFolderId, hash,
+            deleted: false, deletedAt: null, fav: false, tags: [],
+            blob: fileObj
+          }));
+          if (hash && !hash.startsWith('unique_')) existingHashes.add(hash);
+          imported++;
+        }
       } catch (err) {
         console.error('Archive import error', entry.name, err);
         failed++;
@@ -2930,8 +3241,7 @@ window.importFromArchive = async (input) => {
 
     hideProgress();
     await refresh();
-    toast('Импорт завершён',
-      `Добавлено: ${imported} · Пропущено: ${skipped} · Ошибок: ${failed}`);
+    toast('Импорт завершён', `Добавлено: ${imported} · Пропущено: ${skipped} · Ошибок: ${failed}`);
   } catch (e) {
     console.error(e);
     hideProgress();
