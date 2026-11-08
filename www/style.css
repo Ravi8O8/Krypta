@@ -19,110 +19,12 @@ body[data-theme="amoled"] {
   --bd:#17171a; --acc:#a78bfa; --acc-rgb:167,139,250;
   --danger:#ff3b30; --danger-rgb:255,59,48;
 }
-body[data-theme="ocean"] {
-  --bg:#0b1120; --bg-rgb:11,17,32;
-  --card:#15203c; --card-rgb:21,32,60;
-  --txt:#e2e8f0; --mut:#94a3b8;
-  --bd:#1e293b; --acc:#38bdf8; --acc-rgb:56,189,248;
-  --danger:#f43f5e; --danger-rgb:244,63,94;
-}
-body[data-theme="dracula"] {
-  --bg:#282a36; --bg-rgb:40,42,54;
-  --card:#343746; --card-rgb:52,55,70;
-  --txt:#f8f8f2; --mut:#8b94b3;
-  --bd:#44475a; --acc:#ff79c6; --acc-rgb:255,121,198;
-  --danger:#ff5555; --danger-rgb:255,85,85;
-}
-body[data-theme="midnight"] {
-  --bg:#0b0f19; --bg-rgb:11,15,25;
-  --card:#161e2e; --card-rgb:22,30,46;
-  --txt:#e2e8f0; --mut:#94a3b8;
-  --bd:#1e293b; --acc:#818cf8; --acc-rgb:129,140,248;
-  --danger:#ef4444; --danger-rgb:239,68,68;
-}
-body[data-theme="rose"] {
-  --bg:#1c1014; --bg-rgb:28,16,20;
-  --card:#2d1a22; --card-rgb:45,26,34;
-  --txt:#fef2f2; --mut:#fca5a5;
-  --bd:#4c2533; --acc:#fb7185; --acc-rgb:251,113,133;
-  --danger:#ef4444; --danger-rgb:239,68,68;
-}
 body[data-theme="nord"] {
   --bg:#2e3440; --bg-rgb:46,52,64;
   --card:#3b4252; --card-rgb:59,66,82;
   --txt:#eceff4; --mut:#d8dee9;
   --bd:#4c566a; --acc:#88c0d0; --acc-rgb:136,192,208;
   --danger:#bf616a; --danger-rgb:191,97,106;
-}
-body[data-theme="cyberpunk"] {
-  --bg:#000000; --bg-rgb:0,0,0;
-  --card:#101010; --card-rgb:16,16,16;
-  --txt:#fcee0a; --mut:#8b8b8b;
-  --bd:#222222; --acc:#f40b78; --acc-rgb:244,11,120;
-  --danger:#ff003c; --danger-rgb:255,0,60;
-}
-body[data-theme="github"] {
-  --bg:#0d1117; --bg-rgb:13,17,23;
-  --card:#161b22; --card-rgb:22,27,34;
-  --txt:#c9d1d9; --mut:#8b949e;
-  --bd:#30363d; --acc:#3fb950; --acc-rgb:63,185,80;
-  --danger:#da3633; --danger-rgb:218,54,51;
-}
-body[data-theme="tokyo"] {
-  --bg:#1a1b26; --bg-rgb:26,27,38;
-  --card:#24283b; --card-rgb:36,40,59;
-  --txt:#c0caf5; --mut:#565f89;
-  --bd:#414868; --acc:#7aa2f7; --acc-rgb:122,162,247;
-  --danger:#f7768e; --danger-rgb:247,118,142;
-}
-body[data-theme="gruvbox"] {
-  --bg:#282828; --bg-rgb:40,40,40;
-  --card:#3c3836; --card-rgb:60,56,54;
-  --txt:#ebdbb2; --mut:#a89984;
-  --bd:#504945; --acc:#fabd2f; --acc-rgb:250,189,47;
-  --danger:#fb4934; --danger-rgb:251,73,52;
-}
-body[data-theme="matrix"] {
-  --bg:#000000; --bg-rgb:0,0,0;
-  --card:#0a0f0a; --card-rgb:10,15,10;
-  --txt:#b0ffb0; --mut:#4a8a4a;
-  --bd:#103810; --acc:#00ff41; --acc-rgb:0,255,65;
-  --danger:#ff3333; --danger-rgb:255,51,51;
-}
-body[data-theme="sakura"] {
-  --bg:#fdf2f6; --bg-rgb:253,242,246;
-  --card:#ffffff; --card-rgb:255,255,255;
-  --txt:#4a1d38; --mut:#9c6b8a;
-  --bd:#f5d7e3; --acc:#ec4899; --acc-rgb:236,72,153;
-  --danger:#ef4444; --danger-rgb:239,68,68;
-}
-body[data-theme="forest"] {
-  --bg:#0d1f14; --bg-rgb:13,31,20;
-  --card:#14291c; --card-rgb:20,41,28;
-  --txt:#d1fae5; --mut:#6b9d7f;
-  --bd:#1e3d2a; --acc:#34d399; --acc-rgb:52,211,153;
-  --danger:#f87171; --danger-rgb:248,113,113;
-}
-body[data-theme="sunset"] {
-  --bg:#1a0e0a; --bg-rgb:26,14,10;
-  --card:#2d1810; --card-rgb:45,24,16;
-  --txt:#fff5ed; --mut:#a17460;
-  --bd:#4a261a; --acc:#fb923c; --acc-rgb:251,146,60;
-  --danger:#ef4444; --danger-rgb:239,68,68;
-}
-body[data-theme="cream"] {
-  --bg:#fbf6ee; --bg-rgb:251,246,238;
-  --card:#ffffff; --card-rgb:255,255,255;
-  --txt:#3d2f1f; --mut:#8a7558;
-  --bd:#ecdfc8; --acc:#d97706; --acc-rgb:217,119,6;
-  --danger:#dc2626; --danger-rgb:220,38,38;
-}
-body[data-theme="neon"] {
-  --bg:#08090c; --bg-rgb:8,9,12;
-  --card:#12141a; --card-rgb:18,20,26;
-  --txt:#f4f4f6; --mut:#878a96;
-  --bd:#1e2027; --acc:#22d3ee; --acc-rgb:34,211,238;
-  --danger:#ec4899; --danger-rgb:236,72,153;
 }
 
 :root {
@@ -238,16 +140,6 @@ header {
 .tab.active svg{opacity:1;}
 .tab.active[data-type="image"] svg, .tab.active[data-type="video"] svg { fill: var(--acc); }
 .tab.active[data-type="fav"] svg { fill: #fbbf24; }
-
-#refresh-bar {
-  display:flex; align-items:center; justify-content:center; gap:8px;
-  margin:12px 16px 0; padding:12px; background:var(--card);
-  border:1px solid var(--bd); border-radius:var(--r-md);
-  color:var(--mut); font-size:13px; font-weight:600; cursor:pointer;
-}
-#refresh-bar:active{background:color-mix(in srgb,var(--card) 85%,var(--txt) 5%);}
-.spin{animation:spin 1s linear infinite;}
-@keyframes spin{100%{transform:rotate(360deg);}}
 
 #grid{display:grid;grid-template-columns:var(--cols);gap:10px;padding:16px;touch-action:pan-y;}
 .tile {
