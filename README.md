@@ -5,7 +5,7 @@
 **Локальная медиатека для Android и браузера**
 
 [![Build APK](https://github.com/Ravi8O8/Krypta/actions/workflows/build.yml/badge.svg)](https://github.com/Ravi8O8/Krypta/actions/workflows/build.yml)
-![Version](https://img.shields.io/badge/version-1.0.1-purple)
+![Version](https://img.shields.io/badge/version-1.0.2-purple)
 ![Platform](https://img.shields.io/badge/platform-Android%20%7C%20Web-blue)
 ![Status](https://img.shields.io/badge/status-beta-orange)
 [![Made with DeepSeek](https://img.shields.io/badge/Made%20with-DeepSeek-4D6BFE?logo=deepseek&logoColor=white)](https://deepseek.com)
