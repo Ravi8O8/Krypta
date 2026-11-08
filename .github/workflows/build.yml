@@ -24,16 +24,6 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Cache Gradle packages
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
-
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
         with:
@@ -54,6 +44,18 @@ jobs:
 
       - name: Add Android platform
         run: npx cap add android
+
+      - name: Configure Gradle Wrapper
+        run: |
+          WRAPPER=android/gradle/wrapper/gradle-wrapper.properties
+          
+          sed -i 's|https\\://services.gradle.org/distributions/gradle-8.2.1-all.zip|https\\://mirrors.cloud.tencent.com/gradle/gradle-8.2.1-all.zip|' "$WRAPPER"
+          
+          sed -i '/networkTimeout/d' "$WRAPPER"
+          echo "networkTimeout=60000" >> "$WRAPPER"
+          
+          echo "=== Итоговый gradle-wrapper.properties ==="
+          cat "$WRAPPER"
 
       - name: Set version from package.json
         run: |
@@ -78,8 +80,6 @@ jobs:
           fi
 
       - name: Build Debug APK
-        env:
-          GRADLE_OPTS: "-Dorg.gradle.internal.http.connectionTimeout=60000 -Dorg.gradle.internal.http.socketTimeout=60000"
         run: |
           cd android
           chmod +x gradlew
