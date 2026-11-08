@@ -74,8 +74,6 @@ let isAppInBackground = false;
 
 let soundEnabled = true;
 let audioCtx = null;
-let silentOsc = null;
-let silentGain = null;
 
 function initAudio() {
   if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -111,32 +109,6 @@ function playSound(type) {
     osc.start(now); osc.stop(now + 0.05);
     if (navigator.vibrate) navigator.vibrate(5);
   }
-}
-
-function preventThrottle() {
-  if (silentOsc) return;
-  try {
-    initAudio();
-    if (!audioCtx) return;
-    silentOsc = audioCtx.createOscillator();
-    silentGain = audioCtx.createGain();
-    silentGain.gain.value = 0.00001;
-    silentOsc.frequency.value = 60;
-    silentOsc.connect(silentGain);
-    silentGain.connect(audioCtx.destination);
-    silentOsc.start();
-  } catch (e) { silentOsc = null; silentGain = null; }
-}
-function allowThrottle() {
-  try {
-    if (silentOsc) {
-      silentOsc.stop();
-      silentOsc.disconnect();
-      if (silentGain) silentGain.disconnect();
-    }
-  } catch (e) {}
-  silentOsc = null;
-  silentGain = null;
 }
 
 window.toggleSound = async () => {
@@ -305,7 +277,6 @@ async function createZip(files) {
     const blob = f.blob; 
     const size = blob.size;
     
-    // Потоковый подсчет CRC32
     let crc = 0xFFFFFFFF;
     const reader = blob.stream().getReader();
     while (true) {
@@ -930,7 +901,6 @@ window.openDupGallery = async (fileIds, clickedId) => {
 async function compactDB() {
   if (!await showConfirm('Сжатие базы', 'Очистить корзину, удалить "осиротевшие" файлы и пересобрать базу?')) return;
   await acquireWakeLock();
-  preventThrottle();
   showProgress('Очистка', 10, 'Анализ данных...', '...');
   try {
     let files = await getAllFiles(); let folders = await getAllFolders();
@@ -987,7 +957,6 @@ async function compactDB() {
     hideProgress();
     toast('Ошибка', 'Не удалось', true);
   } finally {
-    allowThrottle();
     releaseWakeLock();
   }
 }
@@ -1181,7 +1150,6 @@ async function writeBlobToCacheChunked(blob, cachePath, onProgress) {
 // СКАЧИВАНИЕ (ИСПРАВЛЕНО НА 'CACHE')
 // ================================================================
 async function downloadFileSafe(file, filename) {
-  // ========== APK (Capacitor) ==========
   if (window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform()) {
     try {
       const { Filesystem, Share } = window.Capacitor.Plugins;
@@ -1228,7 +1196,6 @@ async function downloadFileSafe(file, filename) {
     }
   }
 
-  // ========== БРАУЗЕР (веб-версия) ==========
   const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
 
   if (window.showSaveFilePicker && !isMobile) {
@@ -1905,7 +1872,6 @@ $('btnAdd').onclick = () => $('file').click();
 $('file').onchange = async e => {
   const files=[...e.target.files]; if(!files.length) return;
   await acquireWakeLock();
-  preventThrottle();
   const addedImageIds = [];
   try {
     const existingFiles = await getAllFiles();
@@ -1936,7 +1902,6 @@ $('file').onchange = async e => {
     }
   } catch(err) { console.error(err); toast('Ошибка', err.message || 'Не удалось', true); }
   e.target.value=''; hideProgress();
-  allowThrottle();
   releaseWakeLock();
 };
 $('btnEmptyTrash').onclick = () => emptyTrash();
@@ -2089,7 +2054,6 @@ async function compressFiles(ids, isAutoBatch = false) {
   if(!images.length) return toast('Ошибка','Только фото',true);
   $('ctxMenu').classList.remove('on');
   await acquireWakeLock();
-  preventThrottle();
   const reusableCanvas = document.createElement('canvas');
   const reusableCtx = reusableCanvas.getContext('2d');
   let processed = 0, succeeded = 0, failed = 0;
@@ -2147,7 +2111,7 @@ async function compressFiles(ids, isAutoBatch = false) {
       else toast('Успешно', `Сжато: ${succeeded} фото`);
     }
   } catch(e) { console.error(e); hideProgress(); toast('Ошибка', 'Не удалось завершить', true); }
-  finally { allowThrottle(); releaseWakeLock(); }
+  finally { releaseWakeLock(); }
 }
 
 function showCompressResults(stats, targetIds) {
@@ -2221,7 +2185,6 @@ $('ctxDownload').onclick = async () => {
   }
 
   await acquireWakeLock();
-  preventThrottle();
   showProgress('Экспорт', 0, 'Подготовка...', '');
   try {
     const items = [];
@@ -2280,7 +2243,7 @@ $('ctxDownload').onclick = async () => {
     if (items.length === 0) {
       hideProgress();
       toast('Пусто', 'Нет файлов для экспорта', true);
-      allowThrottle(); releaseWakeLock();
+      releaseWakeLock();
       return;
     }
 
@@ -2308,7 +2271,7 @@ $('ctxDownload').onclick = async () => {
         }
       }
       usedPaths.add(uniquePath.toLowerCase());
-      zipFiles.push({ name: uniquePath, blob: data }); // <--- Используем blob
+      zipFiles.push({ name: uniquePath, blob: data });
     }
 
     showProgress('Экспорт', 92, 'Создание архива...', '');
@@ -2325,7 +2288,6 @@ $('ctxDownload').onclick = async () => {
     hideProgress();
     toast('Ошибка', 'Не удалось создать ZIP', true);
   } finally {
-    allowThrottle();
     releaseWakeLock();
   }
 };
@@ -2476,7 +2438,12 @@ window.setCols = async cols => {
 };
 async function loadTheme() {
   const s = await getAllSettings();
-  const t = s.theme || 'dark';
+  const ALLOWED_THEMES = ['dark', 'light', 'amoled', 'nord'];
+  let t = s.theme || 'dark';
+  if (!ALLOWED_THEMES.includes(t)) {
+    t = 'dark';
+    await setSetting('theme', 'dark');
+  }
   const c = s.cols || 'repeat(3, 1fr)';
   await setTheme(t); await setCols(c);
   const opacity = Number(s.bgOpacity ?? 85);
@@ -2504,15 +2471,10 @@ $('btnSettings').onclick = async () => {
   const trashDays = await getTrashAutoDays();
   updateTrashAutoPillsUI(trashDays);
 };
-window.manualRefresh = btn => {
-  const icon = btn.querySelector('svg'); icon.classList.add('spin');
-  refresh().then(() => { setTimeout(()=>{icon.classList.remove('spin'); toast('Обновлено','Список актуален');}, 500); });
-};
 
 window.exportAllData = async () => {
   if (!await showConfirm('Экспорт', 'Создать полный архив со всеми файлами, папками и настройками?<br><br>Это может занять время.', 'Экспорт', 'Отмена')) return;
   await acquireWakeLock();
-  preventThrottle();
   showProgress('Экспорт', 0, 'Подготовка...', '');
   try {
     const [files, folders, settings] = await Promise.all([getAllFiles(), getAllFolders(), p(st(SS, 'readonly').getAll())]);
@@ -2520,14 +2482,14 @@ window.exportAllData = async () => {
     let step = 0;
     const totalSteps = files.length * 2 + 3;
     const metadata = { version: DB_VERSION, exportedAt: Date.now(), files, folders, settings };
-    zipParts.push({ name: 'metadata.json', blob: new Blob([new TextEncoder().encode(JSON.stringify(metadata))]) }); // <--- Blob
+    zipParts.push({ name: 'metadata.json', blob: new Blob([new TextEncoder().encode(JSON.stringify(metadata))]) });
     step++;
     showProgress('Экспорт', Math.round((step/totalSteps)*100), 'metadata.json', '');
     await nextMacrotask();
     const bgFile = await getFromOPFS(BG_FILE_ID);
     if (bgFile) {
       try {
-        zipParts.push({ name: 'background.jpg', blob: bgFile }); // <--- Blob
+        zipParts.push({ name: 'background.jpg', blob: bgFile });
       } catch(e) {}
     }
     step++;
@@ -2535,7 +2497,7 @@ window.exportAllData = async () => {
       try {
         const mainFile = await getFromOPFS(f.fileId) || f.blob;
         if (mainFile) {
-          zipParts.push({ name: `files/${f.fileId}`, blob: mainFile }); // <--- Blob
+          zipParts.push({ name: `files/${f.fileId}`, blob: mainFile });
         }
       } catch(e) { console.warn('Skip file', f.name, e); }
       step++;
@@ -2544,7 +2506,7 @@ window.exportAllData = async () => {
       try {
         const thumb = await getThumb(f);
         if (thumb) {
-          zipParts.push({ name: `thumbs/${f.fileId}`, blob: thumb }); // <--- Blob
+          zipParts.push({ name: `thumbs/${f.fileId}`, blob: thumb });
         }
       } catch(e) {}
       step++;
@@ -2560,7 +2522,7 @@ window.exportAllData = async () => {
     await downloadFileSafe(blob, name);
     toast('Готово', `Экспортировано ${files.length} файлов (${(blob.size/1048576).toFixed(1)} МБ)`);
   } catch(e) { console.error(e); hideProgress(); toast('Ошибка', 'Не удалось экспортировать: ' + e.message, true); }
-  finally { allowThrottle(); releaseWakeLock(); }
+  finally { releaseWakeLock(); }
 };
 
 const ARCHIVE_MIME_MAP = {
@@ -2618,7 +2580,6 @@ window.importFromArchive = async (input) => {
       if (!await showConfirm('Восстановление', 'Обнаружена полная резервная копия.<br><br>Все текущие данные будут <b>заменены</b>. Продолжить?', 'Восстановить', 'Отмена')) return;
 
       await acquireWakeLock();
-      preventThrottle();
       showProgress('Импорт', 10, 'Восстановление фона...', '');
       await nextMacrotask();
 
@@ -2685,7 +2646,6 @@ window.importFromArchive = async (input) => {
       hideProgress();
       toast('Готово', `Восстановлено ${totalFiles} файлов. Перезагрузка...`);
       setTimeout(() => location.reload(), 1500);
-      allowThrottle();
       releaseWakeLock();
       return;
     }
@@ -2696,7 +2656,6 @@ window.importFromArchive = async (input) => {
       'Импортировать', 'Отмена')) return;
 
     await acquireWakeLock();
-    preventThrottle();
     showProgress('Импорт', 0, 'Чтение архива...', '');
     await nextMacrotask();
 
@@ -2717,7 +2676,6 @@ window.importFromArchive = async (input) => {
     if (mediaEntries.length === 0) {
       hideProgress();
       toast('Пусто', 'В архиве не найдено фото или видео', true);
-      allowThrottle();
       releaseWakeLock();
       return;
     }
@@ -2839,7 +2797,6 @@ window.importFromArchive = async (input) => {
     hideProgress();
     toast('Ошибка', e.message || 'Не удалось обработать архив', true);
   } finally {
-    allowThrottle();
     releaseWakeLock();
   }
 };
