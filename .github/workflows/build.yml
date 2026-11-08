@@ -114,7 +114,7 @@ jobs:
               }
           }
           EOT
-          sed -i "1s/^/apply from: 'signing.gradle'\n/" android/app/build.gradle
+          sed -i "/apply plugin: 'com.android.application'/a apply from: 'signing.gradle'" android/app/build.gradle
 
       - name: Build APK
         run: |
