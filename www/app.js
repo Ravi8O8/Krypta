@@ -26,7 +26,7 @@ const FOLDER_COLORS = ['#a78bfa', '#f87171', '#34d399', '#fbbf24', '#60a5fa', '#
 let selectedFolderColor = FOLDER_COLORS[0];
 
 let db, currentFolder=null, filterType='all', searchQuery='';
-let searchScope = 'current'; // 'current' | 'all'
+let searchScope = 'current';
 let viewMode = 'files';
 let sel=new Set(), folderSel=new Set();
 const failedVideoThumbs = new Set();
@@ -81,6 +81,7 @@ let audioCtx = null;
 
 let currentOperation = null;
 let lastProgressUpdate = 0;
+let _keepAliveTimer = null;
 
 function initAudio() {
   if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -140,6 +141,14 @@ document.addEventListener('pointerdown', (e) => {
     if (!e.target.closest('.ck-key') && !e.target.closest('#confirmOk') && !e.target.closest('#confirmCancel')) playSound('click');
   }
 }, { passive: true });
+
+window.addEventListener('beforeunload', (e) => {
+  if (currentOperation) {
+    e.preventDefault();
+    e.returnValue = '';
+    return '';
+  }
+});
 
 let settingsCache = null;
 async function getAllSettings() {
@@ -201,9 +210,6 @@ const nextMacrotask = (() => {
   });
 })();
 
-// ============================================================
-// KEEP-ALIVE
-// ============================================================
 let _kaEl = null, _kaRaf = null, _kaRunning = false, _kaI = 0;
 function startKeepAlive() {
   if (_kaRunning) return;
@@ -275,11 +281,17 @@ const imageLoader = new IntersectionObserver((entries) => {
 const $ = id => document.getElementById(id);
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
-// ============================================================
-// PROGRESS с throttle
-// ============================================================
+function formatEta(current, total, elapsedMs) {
+  if (current <= 0 || total <= 0 || elapsedMs <= 0) return '...';
+  const avg = elapsedMs / current;
+  const remaining = (total - current) * avg;
+  if (remaining < 1000) return '...';
+  const seconds = Math.round(remaining / 1000);
+  if (seconds < 60) return `~${seconds} сек`;
+  return `~${Math.round(seconds / 60)} мин`;
+}
+
 function showProgress(title, percent, file, eta, force = false) {
-  startKeepAlive();
   const now = Date.now();
   const isMilestone = (percent === 0 || percent === 100);
   if (!force && !isMilestone && now - lastProgressUpdate < 200 && $('progressDrawer').classList.contains('on')) return;
@@ -287,16 +299,17 @@ function showProgress(title, percent, file, eta, force = false) {
   $('progTitle').textContent = title; $('progPercent').textContent = percent + '%';
   $('progFill').style.width = percent + '%'; $('progFile').textContent = file; $('progEta').textContent = eta;
   $('progressDrawer').classList.add('on');
+  if (!_keepAliveTimer && !_kaRunning) {
+    _keepAliveTimer = setTimeout(() => { _keepAliveTimer = null; startKeepAlive(); }, 1000);
+  }
 }
 function hideProgress() {
-  $('progressDrawer').classList.remove('on');
+  if (_keepAliveTimer) { clearTimeout(_keepAliveTimer); _keepAliveTimer = null; }
   stopKeepAlive();
+  $('progressDrawer').classList.remove('on');
   lastProgressUpdate = 0;
 }
 
-// ============================================================
-// ABORT helpers
-// ============================================================
 function startAbortableOperation(type, title) {
   currentOperation = { type, title, abort: false };
   $('progCancelBtn').style.display = 'flex';
@@ -316,14 +329,14 @@ $('progCancelBtn').onclick = () => {
   }
 };
 
-// ============================================================
-// Проверка места
-// ============================================================
 async function checkFreeSpace(requiredBytes, label) {
   if (!navigator.storage || !navigator.storage.estimate) return true;
   try {
     const est = await navigator.storage.estimate();
-    const free = (est.quota || 0) - (est.usage || 0);
+    const quota = est.quota || 0;
+    const usage = est.usage || 0;
+    if (quota <= 0) return true;
+    const free = quota - usage;
     if (free < requiredBytes * 1.15) {
       const freeMB = (free / 1048576).toFixed(0);
       const needMB = (requiredBytes * 1.15 / 1048576).toFixed(0);
@@ -335,9 +348,6 @@ async function checkFreeSpace(requiredBytes, label) {
   } catch(e) { return true; }
 }
 
-// ============================================================
-// TOAST + UNDO
-// ============================================================
 let pendingUndo = null;
 
 function toast(title, sub='', isError=false) {
@@ -393,9 +403,6 @@ const CRC_TABLE = (() => {
   return t;
 })();
 
-// ============================================================
-// STREAMING ZIP WRITER — ZIP64
-// ============================================================
 function isCapacitorNative() {
   return window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform();
 }
@@ -456,7 +463,11 @@ async function createOutputStream(filename) {
           const { uri } = await Filesystem.getUri({ path, directory });
           return { uri, name: safeName, size: bytesWritten };
         },
-        abort: async () => { aborted = true; try { await Filesystem.deleteFile({ path, directory }); } catch(e) {} }
+        abort: async () => {
+          aborted = true;
+          try { await writeChain; } catch(_) {}
+          try { await Filesystem.deleteFile({ path, directory }); } catch(e) {}
+        }
       };
     } catch (e) { console.error('createOutputStream (native) failed:', e); return null; }
   }
@@ -605,9 +616,6 @@ async function writeStreamingZip(writable, items, onProgress) {
   await writable.write(eocd);
 }
 
-// ============================================================
-// IN-MEMORY ZIP READER
-// ============================================================
 async function parseZip(blob) {
   const buf = new Uint8Array(await blob.arrayBuffer());
   const dv = new DataView(buf.buffer);
@@ -760,9 +768,6 @@ async function parseZipStreaming(file) {
   return { file, entries };
 }
 
-// ============================================================
-// EXTRACT — ускорено для deflate
-// ============================================================
 async function extractEntryToOPFS(zipInfo, entry, fileId) {
   const lhBuf = new Uint8Array(await zipInfo.file.slice(entry.localOffset, entry.localOffset + 30).arrayBuffer());
   const lhDV = new DataView(lhBuf.buffer);
@@ -865,25 +870,30 @@ async function extractEntryToBuffer(zipInfo, entry) {
 }
 
 function sanitizeName(name) { return String(name || 'file').replace(/[\/\\:*?"<>|\x00-\x1f]/g, '_'); }
-
-// ============================================================
-// EXIF date
-// ============================================================
 async function extractExifDate(file) {
-  if (!file.type.startsWith('image/')) return null;
+  if (!file || !file.type.startsWith('image/')) return null;
   if (file.size < 32) return null;
   try {
-    const size = Math.min(file.size, 128 * 1024);
-    const head = new Uint8Array(await file.slice(0, size).arrayBuffer());
-    if (head.length < 4 || head[0] !== 0xFF || head[1] !== 0xD8) return null;
-    const str = new TextDecoder('latin1').decode(head);
-    const m = str.match(/(\d{4})[:\-](\d{2})[:\-](\d{2})[ T](\d{2})[:\-](\d{2})[:\-](\d{2})/);
-    if (!m) return null;
-    const [, y, mo, d, h, mi, s] = m;
-    const ts = Date.UTC(+y, +mo - 1, +d, +h, +mi, +s);
-    if (isNaN(ts) || ts < Date.UTC(1990) || ts > Date.now() + 86400000) return null;
-    return ts;
-  } catch(e) { return null; }
+    const head = new Uint8Array(await file.slice(0, Math.min(file.size, 128 * 1024)).arrayBuffer());
+    if (head[0] === 0xFF && head[1] === 0xD8) {
+      const str = new TextDecoder('latin1').decode(head);
+      const m = str.match(/(\d{4})[:\-](\d{2})[:\-](\d{2})[ T](\d{2})[:\-](\d{2})[:\-](\d{2})/);
+      if (m) {
+        const [, y, mo, d, h, mi, s] = m;
+        const ts = Date.UTC(+y, +mo - 1, +d, +h, +mi, +s);
+        if (!isNaN(ts) && ts >= Date.UTC(1990) && ts <= Date.now() + 86400000) return ts;
+      }
+    }
+    if (head.length >= 12 && head[4] === 0x66 && head[5] === 0x74 && head[6] === 0x79 && head[7] === 0x70) {
+      if (file.lastModified && file.lastModified >= Date.UTC(1990) && file.lastModified <= Date.now() + 86400000) {
+        return file.lastModified;
+      }
+    }
+    if (file.lastModified && file.lastModified >= Date.UTC(1990) && file.lastModified <= Date.now() + 86400000) {
+      return file.lastModified;
+    }
+  } catch(e) {}
+  return null;
 }
 
 async function generateImageThumbnail(file, maxSize = 300) {
@@ -923,7 +933,6 @@ async function generateImageThumbnail(file, maxSize = 300) {
   });
 }
 
-// Умное видео-превью: ищем самый яркий кадр
 async function generateVideoThumbnail(file, maxSize = 300) {
   return new Promise((resolve) => {
     const video = document.createElement('video');
@@ -983,7 +992,12 @@ async function generateVideoThumbnail(file, maxSize = 300) {
       try {
         const dur = video.duration;
         if (!isFinite(dur) || dur <= 0) { finish(null); return; }
-        const times = [dur * 0.1, dur * 0.25, dur * 0.5, dur * 0.75].filter(t => t > 0.1 && t < dur - 0.1);
+        let times;
+        if (dur > 300) {
+          times = [dur * 0.15, dur * 0.6];
+        } else {
+          times = [dur * 0.1, dur * 0.25, dur * 0.5, dur * 0.75].filter(t => t > 0.1 && t < dur - 0.1);
+        }
         if (times.length === 0) times.push(Math.min(dur / 2, dur - 0.1));
         let bestTime = times[0];
         let bestB = -1;
@@ -1056,9 +1070,10 @@ async function loadFolderPreview(folderId, tileEl) {
     if (valid.length === 0) return;
     const previewEl = tileEl.querySelector('.folder-preview');
     if (!previewEl) return;
+    const thumbs = await Promise.all(valid.map(f => getThumb(f)));
     let loaded = 0;
-    for (const f of valid) {
-      const thumb = await getThumb(f);
+    for (let i = 0; i < valid.length; i++) {
+      const thumb = thumbs[i];
       if (thumb) {
         const url = URL.createObjectURL(thumb);
         const item = document.createElement('div');
@@ -1330,7 +1345,7 @@ async function addFile(file, hash) {
   }
   const success = await saveToOPFSChunked(fileId, file);
   if (!success) throw new Error("Не удалось сохранить файл.");
-  if (rootDir && (type === 'image' || type === 'video')) {
+  if (type === 'image' || type === 'video') {
     try {
       const thumbBlob = type === 'image'
         ? await generateImageThumbnail(file)
@@ -1361,10 +1376,6 @@ function detectType(file) {
   return 'other';
 }
 const TYPE_LABEL = {image:'Фото', video:'Видео', other:'Файл'};
-
-// ============================================================
-// TRASH — ОДНА транзакция
-// ============================================================
 async function moveToTrash(fileIds, folderIds) {
   const now = Date.now();
   const allFolders = await getAllFolders();
@@ -1383,8 +1394,6 @@ async function moveToTrash(fileIds, folderIds) {
   for (const f of allFiles) {
     if (!f.deleted && f.folderId != null && folderIdSet.has(f.folderId)) fileIdSet.add(f.id);
   }
-
-  // Файлы — одна транзакция
   if (fileIdSet.size > 0) {
     await new Promise((res, rej) => {
       const tx = db.transaction(SF, 'readwrite');
@@ -1401,8 +1410,6 @@ async function moveToTrash(fileIds, folderIds) {
       tx.onabort = () => rej(tx.error || new Error('aborted'));
     });
   }
-
-  // Папки — одна транзакция
   if (folderIdSet.size > 0) {
     await new Promise((res, rej) => {
       const tx = db.transaction(SFL, 'readwrite');
@@ -1456,7 +1463,6 @@ async function restoreFromTrash(fileIds, folderIds) {
   }
 }
 
-// Параллельное удаление OPFS
 async function deletePermanent(fileIds, folderIds) {
   $('grid').querySelectorAll('.tile').forEach(el => {
     if (el._blobUrl) { try { URL.revokeObjectURL(el._blobUrl); } catch(e) {} el._blobUrl = null; }
@@ -1479,8 +1485,6 @@ async function deletePermanent(fileIds, folderIds) {
   for (const f of allFiles) {
     if (f.folderId != null && folderIdSet.has(f.folderId)) allFileIdSet.add(f.id);
   }
-
-  // Параллельное удаление blob'ов (6 за раз)
   const filesToDelete = allFiles.filter(f => allFileIdSet.has(f.id));
   const CONCURRENCY = 6;
   for (let i = 0; i < filesToDelete.length; i += CONCURRENCY) {
@@ -1491,8 +1495,6 @@ async function deletePermanent(fileIds, folderIds) {
     ])));
     checkAbort();
   }
-
-  // Удаление из DB — одной транзакцией
   if (allFileIdSet.size > 0) {
     await new Promise((res, rej) => {
       const tx = db.transaction(SF, 'readwrite');
@@ -1537,23 +1539,17 @@ async function autoCleanTrash() {
   if (oldFiles.length || oldFolders.length) { try { await deletePermanent(oldFiles, oldFolders); } catch(e) {} }
 }
 
-// Быстрый скан дубликатов (size → hash)
 window.findDuplicates = async () => {
   const files = await getAllFiles();
   const active = files.filter(f => !f.deleted);
-
-  // Группируем по размеру — быстрая проверка
   const bySize = {};
   active.forEach(f => {
     const s = f.size || 0;
     if (!bySize[s]) bySize[s] = [];
     bySize[s].push(f);
   });
-
-  // Только группы с одинаковым размером могут быть дубликатами
   const candidateGroups = Object.values(bySize).filter(g => g.length > 1);
   const duplicates = [];
-
   for (const group of candidateGroups) {
     const byHash = {};
     for (const f of group) {
@@ -1565,7 +1561,6 @@ window.findDuplicates = async () => {
       if (hg.length > 1) duplicates.push(hg);
     }
   }
-
   const res = $('dupResult');
   if (duplicates.length === 0) {
     res.innerHTML = '<div style="text-align:center;padding:40px 0;color:var(--mut);">Дубликатов не найдено</div>';
@@ -1630,7 +1625,6 @@ async function compactDB() {
   try {
     let files = await getAllFiles(); let folders = await getAllFolders();
     const settings = await p(st(SS,'readonly').getAll());
-
     const trashedFiles = files.filter(f => f.deleted);
     if (trashedFiles.length > 0) {
       showProgress('Очистка', 15, 'Удаление корзины...', '');
@@ -1640,7 +1634,6 @@ async function compactDB() {
       await new Promise(r => setTimeout(r, 200));
       files = files.filter(f => !f.deleted);
     }
-
     const trashedFolders = folders.filter(f => f.deleted);
     if (trashedFolders.length > 0) {
       const trashedFolderIds = new Set(trashedFolders.map(f => f.id));
@@ -1664,8 +1657,6 @@ async function compactDB() {
       await new Promise(r => setTimeout(r, 200));
       folders = folders.filter(f => !f.deleted);
     }
-
-    // Осиротевшие файлы
     const validFolderIds = new Set(folders.map(f => f.id));
     const trueOrphans = files.filter(f => f.folderId != null && !validFolderIds.has(f.folderId));
     if (trueOrphans.length > 0) {
@@ -1676,7 +1667,6 @@ async function compactDB() {
       await new Promise((res, rej) => { tOr.oncomplete = res; tOr.onerror = e => rej(e.target.error); });
       files = files.filter(f => f.folderId == null || validFolderIds.has(f.folderId));
     }
-
     if (rootDir) {
       showProgress('Очистка', 40, 'Удаление лишних файлов...', '');
       const validFileIds = new Set(files.map(f => f.fileId));
@@ -1694,7 +1684,6 @@ async function compactDB() {
         for (const name of toRemove) { try { await rootDir.removeEntry(name); } catch(e) {} }
       } catch(e) { console.warn('OPFS cleanup err', e); }
     }
-
     showProgress('Очистка', 60, 'Пересборка IndexedDB...', '');
     db.close();
     await new Promise((res, rej) => {
@@ -1801,9 +1790,11 @@ async function loadTileImage(tileEl) {
   try {
     const skelEl = tileEl.querySelector('.skeleton');
     let thumb = await getThumb(f);
+    let hasFile = !!thumb;
     if (!thumb && f.type === 'video' && !failedVideoThumbs.has(f.fileId)) {
       const file = await getFileData(f);
       if (file) {
+        hasFile = true;
         thumb = await generateVideoThumbnail(file);
         if (thumb) await saveThumb(f.fileId, thumb);
         else failedVideoThumbs.add(f.fileId);
@@ -1811,7 +1802,12 @@ async function loadTileImage(tileEl) {
     }
     if (!thumb && f.type === 'image') {
       const file = await getFileData(f);
-      if (file) { thumb = file; queueBgThumb(f); }
+      if (file) { thumb = file; hasFile = true; queueBgThumb(f); }
+    }
+    if (!hasFile && (f.type === 'image' || f.type === 'video')) {
+      tileEl.classList.add('broken');
+      if (skelEl) skelEl.remove();
+      return;
     }
     if (!thumb) { if (skelEl) skelEl.remove(); return; }
     if (!tileEl.isConnected) return;
@@ -2254,6 +2250,7 @@ function sortList(arr) {
 }
 async function refresh() {
   if(isLocked) return;
+  bgThumbQueue = [];
   const [files, folders] = await Promise.all([getAllFiles(), getAllFolders()]);
   allActiveFilesCache = files.filter(f => !f.deleted);
   allActiveFoldersCache = folders.filter(f => !f.deleted);
@@ -2276,9 +2273,26 @@ async function updateStorageInfo(files = null) {
       const estimate = await navigator.storage.estimate();
       const usedMB = (estimate.usage / (1024 * 1024)).toFixed(2);
       $('storageUsage').textContent = `${usedMB} МБ`;
+      const freeBytes = (estimate.quota || 0) - (estimate.usage || 0);
+      const freeEl = $('storageFree');
+      if (freeEl) {
+        if (freeBytes > 0) {
+          const freeMB = freeBytes / (1024 * 1024);
+          freeEl.textContent = freeMB > 1024 ? `${(freeMB / 1024).toFixed(2)} ГБ` : `${freeMB.toFixed(2)} МБ`;
+        } else {
+          freeEl.textContent = '—';
+        }
+      }
+    }
+    const persistEl = $('storagePersist');
+    if (persistEl) {
+      const persisted = (navigator.storage && navigator.storage.persisted) ? await navigator.storage.persisted() : false;
+      persistEl.textContent = persisted ? '✅ Да' : '⚠️ Нет';
+      persistEl.style.color = persisted ? '#34d399' : '#fbbf24';
     }
   } catch(e) {}
 }
+
 function renderGrid(reset = true) {
   if(isLocked) return;
   if(reset) {
@@ -2303,7 +2317,6 @@ function renderGrid(reset = true) {
     curFiles.sort((a,b)=>(b.deletedAt||0)-(a.deletedAt||0));
     visFolders.sort((a,b)=>(b.deletedAt||0)-(a.deletedAt||0));
   } else if (searchQuery && searchScope === 'all') {
-    // Глобальный поиск по всей библиотеке
     const q = searchQuery.toLowerCase();
     curFiles = allActiveFilesCache.filter(f => f.name.toLowerCase().includes(q) || (f.tags && f.tags.some(t => t.toLowerCase().includes(q))));
     if(filterType === 'image') curFiles = curFiles.filter(f => f.type === 'image');
@@ -2524,8 +2537,9 @@ function updateUI() {
   const hasSel = sel.size + folderSel.size > 0;
   const totalSel = sel.size + folderSel.size;
   const inTrash = viewMode === 'trash';
+  const trashEmpty = (trashFilesCache.length + trashFoldersCache.length) === 0;
   $('bar').style.display = hasSel ? 'none' : 'flex';
-  $('btnEmptyTrash').style.display = inTrash ? 'flex' : 'none';
+  $('btnEmptyTrash').style.display = (inTrash && !trashEmpty) ? 'flex' : 'none';
   $('ctxMenu').classList.toggle('on', hasSel);
   $('ctxRow1').style.display = inTrash ? 'none' : 'grid';
   $('ctxRow2').style.display = inTrash ? 'none' : 'grid';
@@ -2601,7 +2615,6 @@ $('search').addEventListener('input', () => {
 $('search').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('search').blur(); } });
 $('searchClear').onclick = () => { $('search').value=''; searchQuery=''; $('searchWrap').classList.remove('has'); clearTimeout(searchTimer); renderGrid(true); };
 
-// Кнопка "искать везде"
 $('btnSearchScope').onclick = () => {
   searchScope = searchScope === 'current' ? 'all' : 'current';
   $('btnSearchScope').classList.toggle('on', searchScope === 'all');
@@ -2616,7 +2629,6 @@ $('file').onchange = async e => {
   await acquireWakeLock();
   startAbortableOperation('add', 'Добавление');
   const addedImageIds = [];
-  const addedFileRecords = [];
   try {
     const existingFiles = await getAllFiles();
     const existingHashes = new Set(existingFiles.filter(f => !f.deleted).map(f => f.hash).filter(h => h && !h.startsWith('unique_')));
@@ -2636,11 +2648,8 @@ $('file').onchange = async e => {
       const newId = await addFile(file, hash);
       if (detectType(file) === 'image') addedImageIds.push(newId);
       if (hash && !hash.startsWith('unique_')) existingHashes.add(hash);
-      // Собираем запись для фонового превью
-      const rec = existingFiles.find(x => x.id === newId);
     }
     await refresh();
-    // Запуск фонового превью для добавленных фото/видео
     const allNow = await getAllFiles();
     allNow.filter(f => !f.deleted).forEach(f => {
       if (f.type === 'image' || f.type === 'video') queueBgThumb(f);
@@ -2956,6 +2965,8 @@ $('ctxDownload').onclick = async () => {
 
   await acquireWakeLock();
   startAbortableOperation('export', 'Экспорт');
+  let stream = null;
+  const startTime = performance.now();
   try {
     const d = new Date();
     const pad = n => String(n).padStart(2, '0');
@@ -3012,7 +3023,6 @@ $('ctxDownload').onclick = async () => {
       return;
     }
 
-    // Проверка места
     const totalBytes = rawItems.reduce((s, it) => s + (it.file.size || 0), 0);
     if (!await checkFreeSpace(totalBytes * 1.05, 'Экспорт')) return;
 
@@ -3035,17 +3045,20 @@ $('ctxDownload').onclick = async () => {
     }
 
     showProgress('Экспорт', 0, `0/${finalItems.length}`, '', true);
-    const stream = await createOutputStream(zipName);
+    stream = await createOutputStream(zipName);
     if (!stream) {
       toast('Ошибка', 'Браузер не поддерживает потоковую запись в файл. Используйте APK-версию.', true);
       return;
     }
     await writeStreamingZip(stream, finalItems, (i, total, name, bytes) => {
       const pct = Math.min(99, Math.round((i / total) * 100));
-      showProgress('Экспорт', pct, name || '', `${i}/${total} · ${(bytes / 1048576).toFixed(0)} МБ`);
+      const elapsed = performance.now() - startTime;
+      const eta = formatEta(i, total, elapsed);
+      showProgress('Экспорт', pct, name || '', `${i}/${total} · ${(bytes / 1048576).toFixed(0)} МБ · ${eta}`);
     });
     showProgress('Экспорт', 99, 'Финализация...', '', true);
     const result = await stream.close();
+    stream = null;
     hideProgress();
 
     if (result && result.uri && isCapacitorNative()) {
@@ -3056,6 +3069,10 @@ $('ctxDownload').onclick = async () => {
     toast('ZIP готов', `${finalItems.length} файл. · ${(result.size / 1048576).toFixed(2)} МБ`);
   } catch (e) {
     console.error(e);
+    if (stream && typeof stream.abort === 'function') {
+      try { await stream.abort(); } catch(_) {}
+      stream = null;
+    }
     hideProgress();
     if (e.message === 'Отменено пользователем') toast('Отменено', 'Экспорт остановлен');
     else toast('Ошибка', 'Не удалось создать ZIP: ' + (e.message || e), true);
@@ -3162,7 +3179,6 @@ $('tagAddBtn').onclick = async () => {
 };
 $('tagInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('tagAddBtn').click(); } });
 $('tagClose').onclick = () => { $('modalTags').classList.remove('on'); clearSel(); };
-
 $('btnRandom').onclick = async () => {
   if (isLocked) return;
   let curFiles = [...currentFilesCache];
@@ -3252,18 +3268,19 @@ window.exportAllData = async () => {
 
   await acquireWakeLock();
   startAbortableOperation('export', 'Экспорт');
+  let stream = null;
+  const startTime = performance.now();
   try {
     const [files, folders, settings] = await Promise.all([getAllFiles(), getAllFolders(), p(st(SS, 'readonly').getAll())]);
     const d = new Date();
     const pad = n => String(n).padStart(2, '0');
     const zipName = `mediavault_backup_${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}.zip`;
 
-    // Проверка места
     const totalBytes = files.reduce((s, f) => s + (f.size || 0), 0);
     if (!await checkFreeSpace(totalBytes * 1.05, 'Экспорт')) return;
 
     showProgress('Экспорт', 0, 'Открытие файла...', '', true);
-    const stream = await createOutputStream(zipName);
+    stream = await createOutputStream(zipName);
     if (!stream) {
       toast('Ошибка', 'Браузер не поддерживает потоковую запись в файл. Используйте APK-версию.', true);
       return;
@@ -3288,11 +3305,14 @@ window.exportAllData = async () => {
     showProgress('Экспорт', 0, 'Подготовка...', '0%', true);
     await writeStreamingZip(stream, items, (i, total, name, bytes) => {
       const pct = Math.min(99, Math.round((i / total) * 100));
-      showProgress('Экспорт', pct, name || '...', `${i}/${total} · ${(bytes / 1048576).toFixed(0)} МБ`);
+      const elapsed = performance.now() - startTime;
+      const eta = formatEta(i, total, elapsed);
+      showProgress('Экспорт', pct, name || '...', `${i}/${total} · ${(bytes / 1048576).toFixed(0)} МБ · ${eta}`);
     });
 
     showProgress('Экспорт', 99, 'Финализация...', '', true);
     const result = await stream.close();
+    stream = null;
     hideProgress();
 
     if (result && result.uri && isCapacitorNative()) {
@@ -3303,6 +3323,10 @@ window.exportAllData = async () => {
     toast('Готово', `Экспортировано ${files.length} файлов (${(result.size / 1048576).toFixed(1)} МБ)`);
   } catch (e) {
     console.error(e);
+    if (stream && typeof stream.abort === 'function') {
+      try { await stream.abort(); } catch(_) {}
+      stream = null;
+    }
     hideProgress();
     if (e.message === 'Отменено пользователем') toast('Отменено', 'Экспорт остановлен');
     else toast('Ошибка', 'Не удалось экспортировать: ' + (e.message || e), true);
@@ -3327,7 +3351,6 @@ window.importFromArchive = async (input) => {
   input.value = '';
 
   const t0 = performance.now();
-  // Проверка места — примерно ×1.2 от размера архива (распаковка)
   if (!await checkFreeSpace(file.size * 1.2, 'Импорт')) return;
 
   startAbortableOperation('import', 'Импорт');
@@ -3481,7 +3504,6 @@ window.importFromArchive = async (input) => {
 
       const existingFiles = await getAllFiles();
       const existingHashes = new Set(existingFiles.filter(f => !f.deleted).map(f => f.hash).filter(h => h && !h.startsWith('unique_')));
-      // Оптимизация: map размеров для быстрой проверки дубликатов
       const sizesInDb = new Set(existingFiles.filter(f => !f.deleted).map(f => f.size || 0));
 
       const pendingRecords = [];
@@ -3518,7 +3540,6 @@ window.importFromArchive = async (input) => {
 
           await extractEntryToOPFS(zipInfo, entry, fileId);
 
-          // Оптимизация: сначала по размеру, потом по хешу
           let hash = '';
           let isDuplicate = false;
           if (sizesInDb.has(entry.uncompSize)) {
@@ -3553,13 +3574,14 @@ window.importFromArchive = async (input) => {
         const now = Date.now();
         if (now - lastYield > 200 || i === mediaEntries.length - 1) {
           lastYield = now;
-          showProgress('Импорт', 5 + Math.round(((i + 1) / mediaEntries.length) * 90), `${i + 1}/${mediaEntries.length}: ${fileName}`, `✓${imported} · ⏭${skipped} · ✗${failed}`);
+          const elapsed = performance.now() - t0;
+          const eta = formatEta(i + 1, mediaEntries.length, elapsed);
+          showProgress('Импорт', 5 + Math.round(((i + 1) / mediaEntries.length) * 90), `${i + 1}/${mediaEntries.length}: ${fileName}`, `✓${imported} · ⏭${skipped} · ✗${failed} · ${eta}`);
           await nextMacrotask();
         }
       }
       await flushPending();
 
-      // Фоновое превью
       importedFiles.forEach(f => queueBgThumb(f));
 
       const elapsed = (performance.now() - t0) / 1000;
@@ -3571,7 +3593,6 @@ window.importFromArchive = async (input) => {
       return;
     }
 
-    // === БЫСТРЫЙ IN-MEMORY РЕЖИМ ===
     if (!entries.length) { hideProgress(); toast('Пусто', 'Архив пуст', true); return; }
 
     let metadataEntry = null;
@@ -3661,7 +3682,6 @@ window.importFromArchive = async (input) => {
       return;
     }
 
-    // === Обычный импорт медиа из ZIP (In-Memory) ===
     const mediaEntries = entries.filter(e => {
       if (!e.name || e.name.endsWith('/')) return false;
       if (!e.data || e.data.length === 0) return false;
@@ -3744,7 +3764,6 @@ window.importFromArchive = async (input) => {
         const mime = ARCHIVE_MIME_MAP[ext] || '';
         const fileObj = new File([entry.data], fileName, { type: mime });
 
-        // Оптимизация: сначала size, потом hash
         let hash = '';
         let isDuplicate = false;
         if (sizesInDb.has(entry.data.length)) {
@@ -3791,13 +3810,14 @@ window.importFromArchive = async (input) => {
       const now = Date.now();
       if (now - lastYield > 150 || i === mediaEntries.length - 1) {
         lastYield = now;
-        showProgress('Импорт', 5 + Math.round(((i + 1) / mediaEntries.length) * 90), `${i + 1}/${mediaEntries.length}: ${fileName}`, `✓${imported} · ⏭${skipped} · ✗${failed}`);
+        const elapsed = performance.now() - t0;
+        const eta = formatEta(i + 1, mediaEntries.length, elapsed);
+        showProgress('Импорт', 5 + Math.round(((i + 1) / mediaEntries.length) * 90), `${i + 1}/${mediaEntries.length}: ${fileName}`, `✓${imported} · ⏭${skipped} · ✗${failed} · ${eta}`);
         await nextMacrotask();
       }
     }
     await flushBatch();
 
-    // Фоновое превью
     importedFiles.forEach(f => queueBgThumb(f));
 
     const elapsed = (performance.now() - t0) / 1000;
@@ -3817,7 +3837,6 @@ window.importFromArchive = async (input) => {
 };
 
 $('archiveImportFile').onchange = function () { if (this.files && this.files[0]) importFromArchive(this); };
-
 let ckTarget = null;
 let ckLayout = 'ru';
 let ckShift = false;
@@ -4068,12 +4087,46 @@ window.openGithub = function(e) {
   });
 })();
 
+function setupAndroidBackButton() {
+  if (!(window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App)) return;
+  try {
+    window.Capacitor.Plugins.App.addListener('backButton', () => {
+      if ($('viewerModal').classList.contains('on')) { $('viewerClose').click(); return; }
+      if ($('modalSettings').classList.contains('on')) { $('modalSettings').classList.remove('on'); return; }
+      if ($('modalInfo').classList.contains('on')) { $('modalInfo').classList.remove('on'); return; }
+      if ($('modalConfirm').classList.contains('on')) { $('confirmCancel').click(); return; }
+      if ($('modalEdit').classList.contains('on')) { $('meCancel').click(); return; }
+      if ($('modalMove').classList.contains('on')) { $('mvCancel').click(); return; }
+      if ($('modalSort').classList.contains('on')) { $('modalSort').classList.remove('on'); return; }
+      if ($('modalTags').classList.contains('on')) { $('tagClose').click(); return; }
+      if ($('modalDuplicates').classList.contains('on')) { $('modalDuplicates').classList.remove('on'); return; }
+      if ($('modalCompressResult').classList.contains('on')) { $('modalCompressResult').classList.remove('on'); return; }
+      if (ckTarget) { ckHide(true); return; }
+      if (sel.size + folderSel.size > 0) { clearSel(); return; }
+      if (viewMode === 'trash') {
+        document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+        const filesTab = document.querySelector('.tab[data-view="files"]');
+        if (filesTab) filesTab.classList.add('active');
+        viewMode = 'files'; document.body.dataset.view = 'files'; filterType = 'all';
+        refresh(); return;
+      }
+      if (currentFolder !== null) {
+        const cur = allActiveFoldersCache.find(f => f.id === currentFolder);
+        currentFolder = cur ? cur.parentId : null;
+        clearSel(); refresh(); return;
+      }
+      try { window.Capacitor.Plugins.App.exitApp(); } catch(_) {}
+    });
+  } catch(e) { console.warn('Back button setup failed', e); }
+}
+
 (async () => {
   try {
     await initOPFS();
     await openDB();
     await loadTheme();
     await checkLock();
+    setupAndroidBackButton();
     setTimeout(() => { autoCleanTrash().catch(()=>{}); }, 3000);
   } catch(e) {
     console.error(e);
