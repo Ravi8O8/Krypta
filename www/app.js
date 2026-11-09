@@ -361,7 +361,6 @@ const CRC_TABLE = (() => {
 // ============================================================
 // STREAMING ZIP WRITER (экспорт 50+ ГБ)
 // ============================================================
-
 function isCapacitorNative() {
   return window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform();
 }
@@ -389,9 +388,7 @@ async function createOutputStream(filename) {
       const safeName = String(filename || 'export.zip').replace(/[\/\\:*?"<>|]/g, '_');
       const path = `export_${Date.now()}_${safeName}`;
       const directory = 'DOCUMENTS';
-
       try { await Filesystem.deleteFile({ path, directory }); } catch(e) {}
-
       let buffer = [];
       let bufferSize = 0;
       const TARGET = 4 * 1024 * 1024;
@@ -446,7 +443,6 @@ async function createOutputStream(filename) {
       return null;
     }
   }
-
   return null;
 }
 
@@ -584,8 +580,7 @@ async function writeStreamingZip(writable, items, onProgress) {
 }
 
 // ============================================================
-// parseZip — in-memory разбор ZIP (v1.0.4.4, вернули из v1.0.3)
-// Быстро: весь файл уже в RAM. Поддержка ZIP64.
+// IN-MEMORY ZIP READER (быстрый импорт до 1.5 ГБ)
 // ============================================================
 async function parseZip(blob) {
   const buf = new Uint8Array(await blob.arrayBuffer());
@@ -602,7 +597,6 @@ async function parseZip(blob) {
   let cdCount = dv.getUint16(eocdPos + 10, true);
   let cdSize = dv.getUint32(eocdPos + 12, true);
 
-  // ZIP64 locator
   if (eocdPos >= 20) {
     const locPos = eocdPos - 20;
     if (dv.getUint32(locPos, true) === 0x07064b50) {
@@ -628,7 +622,6 @@ async function parseZip(blob) {
     let localOffset = dv.getUint32(pos + 42, true);
     const name = new TextDecoder().decode(buf.subarray(pos + 46, pos + 46 + nameLen));
 
-    // ZIP64 extra field
     if (compSize === 0xFFFFFFFF || uncompSize === 0xFFFFFFFF || localOffset === 0xFFFFFFFF) {
       let ep = pos + 46 + nameLen;
       const epEnd = ep + extraLen;
@@ -689,6 +682,167 @@ async function parseZip(blob) {
     pos += 46 + nameLen + extraLen + commentLen;
   }
   return files;
+}
+
+// ============================================================
+// STREAMING ZIP READER (для 50 ГБ)
+// ============================================================
+async function parseZipStreaming(file) {
+  if (file.size < 22) throw new Error('Файл слишком мал');
+  const tailSize = Math.min(file.size, 65557);
+  const tailStart = file.size - tailSize;
+  const tailBuf = new Uint8Array(await file.slice(tailStart).arrayBuffer());
+  let eocdPos = -1;
+  for (let i = tailBuf.length - 22; i >= 0; i--) {
+    if (tailBuf[i] === 0x50 && tailBuf[i+1] === 0x4b && tailBuf[i+2] === 0x05 && tailBuf[i+3] === 0x06) {
+      eocdPos = i; break;
+    }
+  }
+  if (eocdPos === -1) throw new Error('Неверный ZIP (нет EOCD)');
+  const eocdDV = new DataView(tailBuf.buffer, eocdPos);
+  let cdCount = eocdDV.getUint16(10, true);
+  let cdSize = eocdDV.getUint32(12, true);
+  let cdOffset = eocdDV.getUint32(16, true);
+
+  if (eocdPos >= 20) {
+    const locPos = eocdPos - 20;
+    const locDV = new DataView(tailBuf.buffer, locPos);
+    if (locDV.getUint32(0, true) === 0x07064b50) {
+      const z64EocdOffset = Number(locDV.getBigUint64(8, true));
+      if (z64EocdOffset + 56 <= file.size) {
+        const z64Buf = new Uint8Array(await file.slice(z64EocdOffset, z64EocdOffset + 56).arrayBuffer());
+        const z64DV = new DataView(z64Buf.buffer);
+        if (z64DV.getUint32(0, true) === 0x06064b50) {
+          cdCount = Number(z64DV.getBigUint64(32, true));
+          cdSize = Number(z64DV.getBigUint64(40, true));
+          cdOffset = Number(z64DV.getBigUint64(48, true));
+        }
+      }
+    }
+  }
+
+  const cdBuf = new Uint8Array(await file.slice(cdOffset, cdOffset + cdSize).arrayBuffer());
+  const cdDV = new DataView(cdBuf.buffer);
+  const entries = [];
+  let pos = 0;
+
+  for (let i = 0; i < cdCount; i++) {
+    if (pos + 46 > cdBuf.length) break;
+    if (cdDV.getUint32(pos, true) !== 0x02014b50) break;
+    const method = cdDV.getUint16(pos + 10, true);
+    const crc = cdDV.getUint32(pos + 16, true);
+    let compSize = cdDV.getUint32(pos + 20, true);
+    let uncompSize = cdDV.getUint32(pos + 24, true);
+    const nameLen = cdDV.getUint16(pos + 28, true);
+    const extraLen = cdDV.getUint16(pos + 30, true);
+    const commentLen = cdDV.getUint16(pos + 32, true);
+    let localOffset = cdDV.getUint32(pos + 42, true);
+    const name = new TextDecoder().decode(cdBuf.slice(pos + 46, pos + 46 + nameLen));
+    const extra = cdBuf.slice(pos + 46 + nameLen, pos + 46 + nameLen + extraLen);
+
+    if (compSize === 0xFFFFFFFF || uncompSize === 0xFFFFFFFF || localOffset === 0xFFFFFFFF) {
+      let ep = 0;
+      while (ep + 4 <= extra.length) {
+        const tag = extra[ep] | (extra[ep+1] << 8);
+        const sz = extra[ep+2] | (extra[ep+3] << 8);
+        if (tag === 0x0001) {
+          let dp = ep + 4;
+          if (uncompSize === 0xFFFFFFFF && dp + 8 <= extra.length) { uncompSize = Number(new DataView(extra.buffer, extra.byteOffset + dp, 8).getBigUint64(0, true)); dp += 8; }
+          if (compSize === 0xFFFFFFFF && dp + 8 <= extra.length) { compSize = Number(new DataView(extra.buffer, extra.byteOffset + dp, 8).getBigUint64(0, true)); dp += 8; }
+          if (localOffset === 0xFFFFFFFF && dp + 8 <= extra.length) { localOffset = Number(new DataView(extra.buffer, extra.byteOffset + dp, 8).getBigUint64(0, true)); dp += 8; }
+          break;
+        }
+        ep += 4 + sz;
+      }
+    }
+    entries.push({ name, method, compSize, uncompSize, localOffset, crc });
+    pos += 46 + nameLen + extraLen + commentLen;
+  }
+  return { file, entries };
+}
+
+async function extractEntryToOPFS(zipInfo, entry, fileId) {
+  const lhBuf = new Uint8Array(await zipInfo.file.slice(entry.localOffset, entry.localOffset + 30).arrayBuffer());
+  const lhDV = new DataView(lhBuf.buffer);
+  const dataStart = entry.localOffset + 30 + lhDV.getUint16(26, true) + lhDV.getUint16(28, true);
+  const fh = await rootDir.getFileHandle(fileId, { create: true });
+  const writable = await fh.createWritable();
+  const CHUNK = 8 * 1024 * 1024;
+
+  try {
+    if (entry.method === 0) {
+      let off = 0;
+      const total = entry.compSize;
+      while (off < total) {
+        const end = Math.min(off + CHUNK, total);
+        const chunkBlob = zipInfo.file.slice(dataStart + off, dataStart + end);
+        await writable.write(chunkBlob);
+        off = end;
+        await nextMacrotask();
+      }
+    } else if (entry.method === 8) {
+      const ds = new DecompressionStream('deflate-raw');
+      const dataBlob = zipInfo.file.slice(dataStart, dataStart + entry.compSize);
+      const pipePromise = dataBlob.stream().pipeTo(ds.writable);
+      const reader = ds.readable.getReader();
+      let parts = [];
+      let partsSize = 0;
+      const flushParts = async () => {
+        if (partsSize === 0) return;
+        const merged = new Uint8Array(partsSize);
+        let o = 0;
+        for (const c of parts) { merged.set(c, o); o += c.length; }
+        await writable.write(merged);
+        parts = []; partsSize = 0;
+        await nextMacrotask();
+      };
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        parts.push(value);
+        partsSize += value.length;
+        if (partsSize >= CHUNK) await flushParts();
+      }
+      await flushParts();
+      await pipePromise;
+    } else {
+      throw new Error('Неизвестный метод сжатия ' + entry.method);
+    }
+    await writable.close();
+    return true;
+  } catch (e) {
+    try { await writable.abort(); } catch(_) {}
+    try { await rootDir.removeEntry(fileId); } catch(_) {}
+    throw e;
+  }
+}
+
+async function extractEntryToBuffer(zipInfo, entry) {
+  if (entry.compSize === 0 && entry.uncompSize === 0) return new Uint8Array(0);
+  const lhBuf = new Uint8Array(await zipInfo.file.slice(entry.localOffset, entry.localOffset + 30).arrayBuffer());
+  const lhDV = new DataView(lhBuf.buffer);
+  const dataStart = entry.localOffset + 30 + lhDV.getUint16(26, true) + lhDV.getUint16(28, true);
+  const dataBlob = zipInfo.file.slice(dataStart, dataStart + entry.compSize);
+
+  if (entry.method === 0) return new Uint8Array(await dataBlob.arrayBuffer());
+  if (entry.method === 8) {
+    const ds = new DecompressionStream('deflate-raw');
+    const pipePromise = dataBlob.stream().pipeTo(ds.writable);
+    const chunks = [];
+    const reader = ds.readable.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+    }
+    await pipePromise;
+    const total = chunks.reduce((s, c) => s + c.length, 0);
+    const out = new Uint8Array(total);
+    let off = 0;
+    for (const c of chunks) { out.set(c, off); off += c.length; }
+    return out;
+  }
+  throw new Error('Неизвестный метод сжатия ' + entry.method);
 }
 
 function sanitizeName(name) { return String(name || 'file').replace(/[\/\\:*?"<>|\x00-\x1f]/g, '_'); }
@@ -2993,55 +3147,161 @@ window.importFromArchive = async (input) => {
   input.value = '';
 
   const t0 = performance.now();
-  showProgress('Импорт', 0, 'Чтение архива в память...', `${(file.size / 1048576).toFixed(0)} МБ`);
+  showProgress('Импорт', 0, 'Чтение архива...', `${(file.size / 1048576).toFixed(0)} МБ`);
   await nextMacrotask();
 
   try {
-    let entries;
-    try {
-      entries = await parseZip(file);
-    } catch (oomErr) {
-      if (oomErr && (oomErr.name === 'RangeError' || /memory|allocation/i.test(oomErr.message || ''))) {
-        hideProgress();
-        toast('Мало памяти', `Архив ${(file.size/1048576/1024).toFixed(1)} ГБ не влезает в RAM. Освободите память или разбейте на части.`, true);
-        return;
+    const RAM_LIMIT = 1.5 * 1024 * 1024 * 1024; // 1.5 ГБ
+    let entries = null;
+    let isStreamingMode = false;
+    let zipInfo = null;
+
+    if (file.size <= RAM_LIMIT) {
+      try {
+        entries = await parseZip(file);
+      } catch (oomErr) {
+        console.warn('OOM на быстром импорте, переключаемся на потоковый...', oomErr);
+        isStreamingMode = true;
       }
-      throw oomErr;
+    } else {
+      isStreamingMode = true;
     }
 
-    if (!entries.length) {
+    if (isStreamingMode) {
       hideProgress();
-      toast('Пусто', 'Архив пуст', true);
+      if (!await showConfirm('Большой архив', 
+        `Архив ${(file.size / 1048576 / 1024).toFixed(1)} ГБ.<br><br>Он слишком большой для быстрой загрузки в память. Приложение будет читать его частями с диска. <b>Это может занять очень много времени.</b><br><br>Продолжить?`, 
+        'Да, продолжить', 'Отмена')) return;
+      
+      await acquireWakeLock();
+      showProgress('Импорт', 0, 'Анализ структуры...', '');
+      zipInfo = await parseZipStreaming(file);
+      
+      const mediaEntries = zipInfo.entries.filter(e => {
+        if (!e.name || e.name.endsWith('/')) return false;
+        const parts = e.name.split('/');
+        if (parts.some(p => p.startsWith('__MACOSX') || p.startsWith('.'))) return false;
+        const m = e.name.match(/\.([a-z0-9]+)$/i);
+        if (!m) return false;
+        return ARCHIVE_MIME_MAP[m[1].toLowerCase()] !== undefined;
+      });
+
+      if (mediaEntries.length === 0) {
+        hideProgress(); toast('Пусто', 'В архиве не найдено фото или видео', true); releaseWakeLock(); return;
+      }
+      
+      if (!await showConfirm('Импорт', `Найдено <b>${mediaEntries.length}</b> медиафайлов.<br><br>Начать импорт?`, 'Импортировать', 'Отмена')) {
+        releaseWakeLock(); return;
+      }
+
+      showProgress('Импорт', 3, 'Создание папок...', '');
+      await nextMacrotask();
+      
+      const folderPaths = new Set();
+      mediaEntries.forEach(e => {
+        const parts = e.name.split('/');
+        parts.pop();
+        for (let i = 1; i <= parts.length; i++) folderPaths.add(parts.slice(0, i).join('/'));
+      });
+
+      const existingFolders = await getAllFolders();
+      const folderMap = new Map();
+      const sortedPaths = [...folderPaths].sort((a, b) => a.split('/').length - b.split('/').length);
+
+      for (const path of sortedPaths) {
+        const parts = path.split('/');
+        const name = parts[parts.length - 1];
+        const parentPath = parts.slice(0, -1).join('/');
+        const parentId = parentPath ? folderMap.get(parentPath) : currentFolder;
+        const existing = existingFolders.find(f => f.parentId === parentId && f.name === name && !f.deleted);
+        let folderId;
+        if (existing) { folderId = existing.id; }
+        else {
+          folderId = await addFolder(name, parentId, FOLDER_COLORS[Math.floor(Math.random() * FOLDER_COLORS.length)]);
+          existingFolders.push({ id: folderId, name, parentId: parentId ?? null, deleted: false });
+        }
+        folderMap.set(path, folderId);
+      }
+
+      const existingFiles = await getAllFiles();
+      const existingHashes = new Set(existingFiles.filter(f => !f.deleted).map(f => f.hash).filter(h => h && !h.startsWith('unique_')));
+
+      let imported = 0, skipped = 0, failed = 0;
+      let lastYield = Date.now();
+
+      for (let i = 0; i < mediaEntries.length; i++) {
+        const entry = mediaEntries[i];
+        const fileName = entry.name.split('/').pop();
+        try {
+          const parts = entry.name.split('/');
+          parts.pop();
+          const folderPath = parts.join('/');
+          const targetFolderId = folderPath ? folderMap.get(folderPath) : currentFolder;
+          const ext = fileName.split('.').pop().toLowerCase();
+          const mime = ARCHIVE_MIME_MAP[ext] || '';
+          const fileId = generateId();
+          
+          await extractEntryToOPFS(zipInfo, entry, fileId);
+          const fileObj = await getFromOPFS(fileId);
+          
+          let hash = '';
+          try { hash = await calculateHash(fileObj); } catch(e) {}
+          
+          if (hash && existingHashes.has(hash)) { 
+            await deleteFromOPFS(fileId);
+            skipped++; 
+          } else {
+            const type = detectType(fileObj);
+            const record = {
+              fileId, name: fileName, type, mime,
+              size: entry.uncompSize, date: Date.now(),
+              folderId: targetFolderId, hash,
+              deleted: false, deletedAt: null, fav: false, tags: []
+            };
+            await p(st(SF, 'readwrite').add(record));
+            if (hash && !hash.startsWith('unique_')) existingHashes.add(hash);
+            imported++;
+          }
+        } catch (err) { console.error('Stream error', entry.name, err); failed++; }
+
+        const now = Date.now();
+        if (now - lastYield > 200 || i === mediaEntries.length - 1) {
+          lastYield = now;
+          showProgress('Импорт', 5 + Math.round(((i + 1) / mediaEntries.length) * 90), `${i + 1}/${mediaEntries.length}: ${fileName}`, `✓${imported} · ⏭${skipped} · ✗${failed}`);
+          await nextMacrotask();
+        }
+      }
+      
+      const elapsed = (performance.now() - t0) / 1000;
+      const totalMB = mediaEntries.reduce((s, e) => s + e.uncompSize, 0) / 1048576;
+      const speed = elapsed > 0 ? totalMB / elapsed : 0;
+
+      hideProgress(); await refresh();
+      toast('Импорт завершён', `${imported} файл. за ${elapsed.toFixed(0)} сек · ${speed.toFixed(1)} МБ/с`);
+      releaseWakeLock();
       return;
     }
 
+    // === БЫСТРЫЙ РЕЖИМ (IN-MEMORY) ===
+    if (!entries.length) { hideProgress(); toast('Пусто', 'Архив пуст', true); return; }
+
     let metadataEntry = null;
-    for (const e of entries) {
-      if (e.name.endsWith('metadata.json')) { metadataEntry = e; break; }
-    }
+    for (const e of entries) { if (e.name.endsWith('metadata.json')) { metadataEntry = e; break; } }
 
     if (metadataEntry) {
       showProgress('Восстановление', 5, 'Разбор метаданных...', '');
       await nextMacrotask();
-
       let metadata;
-      try {
-        metadata = JSON.parse(new TextDecoder().decode(metadataEntry.data));
-      } catch (e) {
-        throw new Error('Неверный формат metadata.json');
-      }
+      try { metadata = JSON.parse(new TextDecoder().decode(metadataEntry.data)); } catch (e) { throw new Error('Неверный формат metadata.json'); }
       if (!metadata || !metadata.files || !metadata.folders) throw new Error('Неверный формат резервной копии');
 
       hideProgress();
-      if (!await showConfirm('Восстановление',
-        'Обнаружена полная резервная копия.<br><br>Все текущие данные будут <b>заменены</b>. Продолжить?',
-        'Восстановить', 'Отмена')) return;
+      if (!await showConfirm('Восстановление', 'Обнаружена полная резервная копия.<br><br>Все текущие данные будут <b>заменены</b>. Продолжить?', 'Восстановить', 'Отмена')) return;
 
       await acquireWakeLock();
       const basePath = metadataEntry.name.substring(0, metadataEntry.name.length - 'metadata.json'.length);
       const entryMap = new Map(entries.map(e => [e.name, e]));
 
-      // Фон
       const bgEntry = entryMap.get(basePath + 'background.jpg');
       if (bgEntry && rootDir) {
         try {
@@ -3049,12 +3309,11 @@ window.importFromArchive = async (input) => {
           const wr = await fh.createWritable();
           await wr.write(new Blob([bgEntry.data]));
           await wr.close();
-        } catch(e) { console.warn('BG restore failed', e); }
+        } catch(e) {}
       }
 
       const totalFiles = metadata.files.length;
       let i = 0;
-      let bytesRestored = 0;
       let lastYieldRestore = Date.now();
 
       for (const f of metadata.files) {
@@ -3065,15 +3324,10 @@ window.importFromArchive = async (input) => {
             const wr = await fh.createWritable();
             const CHUNK = 4 * 1024 * 1024;
             const d = mainEntry.data;
-            if (d.length <= CHUNK) {
-              await wr.write(d);
-            } else {
-              for (let off = 0; off < d.length; off += CHUNK) {
-                await wr.write(d.subarray(off, Math.min(off + CHUNK, d.length)));
-              }
+            if (d.length <= CHUNK) { await wr.write(d); } else {
+              for (let off = 0; off < d.length; off += CHUNK) await wr.write(d.subarray(off, Math.min(off + CHUNK, d.length)));
             }
             await wr.close();
-            bytesRestored += d.length;
           }
           const thumbEntry = entryMap.get(basePath + `thumbs/${f.fileId}`);
           if (thumbEntry && thumbEntry.data && rootDir) {
@@ -3081,11 +3335,9 @@ window.importFromArchive = async (input) => {
             const wr = await fh.createWritable();
             await wr.write(new Blob([thumbEntry.data]));
             await wr.close();
-            bytesRestored += thumbEntry.data.length;
           }
-        } catch (e) { console.warn('Restore failed', f.name, e); }
+        } catch (e) {}
         i++;
-        
         const nowR = Date.now();
         if (nowR - lastYieldRestore > 150 || i === totalFiles) {
           lastYieldRestore = nowR;
@@ -3093,9 +3345,9 @@ window.importFromArchive = async (input) => {
           await nextMacrotask();
         }
       }
-      
-      const restoreSpeed = (bytesRestored / 1048576) / ((performance.now() - t0) / 1000);
-      console.log(`Восстановление: ${restoreSpeed.toFixed(1)} МБ/с`);
+
+      showProgress('Восстановление', 92, 'База данных...', '');
+      await nextMacrotask();
 
       const t1 = db.transaction(SF, 'readwrite'); t1.objectStore(SF).clear();
       await new Promise((res, rej) => { t1.oncomplete = res; t1.onerror = e => rej(e.target.error); });
@@ -3104,28 +3356,24 @@ window.importFromArchive = async (input) => {
       const t3 = db.transaction(SS, 'readwrite'); t3.objectStore(SS).clear();
       await new Promise((res, rej) => { t3.oncomplete = res; t3.onerror = e => rej(e.target.error); });
 
-      const t4 = db.transaction(SF, 'readwrite'); const s4 = t4.objectStore(SF);
-      metadata.files.forEach(f => s4.put(f));
+      const t4 = db.transaction(SF, 'readwrite'); const s4 = t4.objectStore(SF); metadata.files.forEach(f => s4.put(f));
       await new Promise((res, rej) => { t4.oncomplete = res; t4.onerror = e => rej(e.target.error); });
-      const t5 = db.transaction(SFL, 'readwrite'); const s5 = t5.objectStore(SFL);
-      metadata.folders.forEach(f => s5.put(f));
+      const t5 = db.transaction(SFL, 'readwrite'); const s5 = t5.objectStore(SFL); metadata.folders.forEach(f => s5.put(f));
       await new Promise((res, rej) => { t5.oncomplete = res; t5.onerror = e => rej(e.target.error); });
       if (metadata.settings && metadata.settings.length) {
-        const t6 = db.transaction(SS, 'readwrite'); const s6 = t6.objectStore(SS);
-        metadata.settings.forEach(s => s6.put(s));
+        const t6 = db.transaction(SS, 'readwrite'); const s6 = t6.objectStore(SS); metadata.settings.forEach(s => s6.put(s));
         await new Promise((res, rej) => { t6.oncomplete = res; t6.onerror = e => rej(e.target.error); });
       }
 
       settingsCache = null;
       hideProgress();
-      const elapsed = (performance.now() - t0) / 1000;
-      toast('Готово', `Восстановлено ${totalFiles} файлов за ${elapsed.toFixed(0)} сек. Перезагрузка...`);
+      toast('Готово', `Восстановлено ${totalFiles} файлов. Перезагрузка...`);
       setTimeout(() => location.reload(), 1500);
       releaseWakeLock();
       return;
     }
 
-    // === Обычный импорт медиа из ZIP ===
+    // === Обычный импорт медиа из ZIP (In-Memory) ===
     const mediaEntries = entries.filter(e => {
       if (!e.name || e.name.endsWith('/')) return false;
       if (!e.data || e.data.length === 0) return false;
@@ -3136,16 +3384,10 @@ window.importFromArchive = async (input) => {
       return ARCHIVE_MIME_MAP[m[1].toLowerCase()] !== undefined;
     });
 
-    if (mediaEntries.length === 0) {
-      hideProgress();
-      toast('Пусто', 'В архиве не найдено фото или видео', true);
-      return;
-    }
+    if (mediaEntries.length === 0) { hideProgress(); toast('Пусто', 'В архиве не найдено фото или видео', true); return; }
 
     hideProgress();
-    if (!await showConfirm('Импорт из ZIP-архива',
-      `Найдено <b>${mediaEntries.length}</b> медиафайлов.<br><br>Импортировать с сохранением структуры папок?`,
-      'Импортировать', 'Отмена')) return;
+    if (!await showConfirm('Импорт из ZIP-архива', `Найдено <b>${mediaEntries.length}</b> медиафайлов.<br><br>Импортировать с сохранением структуры папок?`, 'Импортировать', 'Отмена')) return;
 
     await acquireWakeLock();
     showProgress('Импорт', 3, 'Создание папок...', '');
@@ -3201,7 +3443,6 @@ window.importFromArchive = async (input) => {
     for (let i = 0; i < mediaEntries.length; i++) {
       const entry = mediaEntries[i];
       const fileName = entry.name.split('/').pop();
-
       try {
         const parts = entry.name.split('/');
         parts.pop();
@@ -3242,17 +3483,12 @@ window.importFromArchive = async (input) => {
             if (pendingRecords.length >= FLUSH_SIZE) await flushBatch();
           }
         }
-      } catch (err) {
-        console.error('Import error', entry.name, err);
-        failed++;
-      }
+      } catch (err) { console.error('Import error', entry.name, err); failed++; }
 
       const now = Date.now();
       if (now - lastYield > 150 || i === mediaEntries.length - 1) {
         lastYield = now;
-        showProgress('Импорт', 5 + Math.round(((i + 1) / mediaEntries.length) * 90),
-          `${i + 1}/${mediaEntries.length}: ${fileName}`,
-          `✓${imported} · ⏭${skipped} · ✗${failed}`);
+        showProgress('Импорт', 5 + Math.round(((i + 1) / mediaEntries.length) * 90), `${i + 1}/${mediaEntries.length}: ${fileName}`, `✓${imported} · ⏭${skipped} · ✗${failed}`);
         await nextMacrotask();
       }
     }
@@ -3262,22 +3498,16 @@ window.importFromArchive = async (input) => {
     const totalMB = mediaEntries.reduce((s, e) => s + e.data.length, 0) / 1048576;
     const speed = elapsed > 0 ? totalMB / elapsed : 0;
 
-    hideProgress();
-    await refresh();
-    toast('Импорт завершён',
-      `${imported} файл. за ${elapsed.toFixed(0)} сек · ${speed.toFixed(1)} МБ/с · пропущено ${skipped} · ошибок ${failed}`);
+    hideProgress(); await refresh();
+    toast('Импорт завершён', `${imported} файл. за ${elapsed.toFixed(0)} сек · ${speed.toFixed(1)} МБ/с · пропущено ${skipped}`);
   } catch (e) {
-    console.error(e);
-    hideProgress();
-    toast('Ошибка', e.message || 'Не удалось обработать архив', true);
+    console.error(e); hideProgress(); toast('Ошибка', e.message || 'Не удалось обработать архив', true);
   } finally {
     releaseWakeLock();
   }
 };
 
-$('archiveImportFile').onchange = function () {
-  if (this.files && this.files[0]) importFromArchive(this);
-};
+$('archiveImportFile').onchange = function () { if (this.files && this.files[0]) importFromArchive(this); };
 
 let ckTarget = null;
 let ckLayout = 'ru';
@@ -3312,20 +3542,13 @@ const CK_LAYOUTS = {
 let ckLayoutsBuilt = false;
 function buildKeyboardDOM() {
   if (ckLayoutsBuilt) return;
-  const rowsEl = $('ckRows');
-  rowsEl.innerHTML = '';
+  const rowsEl = $('ckRows'); rowsEl.innerHTML = '';
   for (const [name, layout] of Object.entries(CK_LAYOUTS)) {
-    const container = document.createElement('div');
-    container.className = 'ck-layout';
-    container.id = 'ck-layout-' + name;
-    container.style.display = 'none';
+    const container = document.createElement('div'); container.className = 'ck-layout'; container.id = 'ck-layout-' + name; container.style.display = 'none';
     layout.forEach(row => {
-      const rowEl = document.createElement('div');
-      rowEl.className = 'ck-row';
+      const rowEl = document.createElement('div'); rowEl.className = 'ck-row';
       row.forEach(key => {
-        const btn = document.createElement('button');
-        btn.className = 'ck-key';
-        btn.type = 'button';
+        const btn = document.createElement('button'); btn.className = 'ck-key'; btn.type = 'button';
         if (key === 'shift') { btn.classList.add('ck-wide'); btn.innerHTML = '⇧'; btn.dataset.action = 'shift'; }
         else if (key === 'backspace') { btn.classList.add('ck-wide'); btn.innerHTML = '⌫'; btn.dataset.action = 'backspace'; }
         else if (key === 'space') { btn.classList.add('ck-space'); btn.textContent = 'Пробел'; btn.dataset.action = 'space'; }
@@ -3344,27 +3567,21 @@ function buildKeyboardDOM() {
 function updateKeyboardKeys() {
   document.querySelectorAll('.ck-key[data-char]').forEach(btn => {
     const char = btn.dataset.char;
-    if (ckShift && /[a-zа-яё]/i.test(char)) btn.textContent = char.toUpperCase();
-    else btn.textContent = char;
+    if (ckShift && /[a-zа-яё]/i.test(char)) btn.textContent = char.toUpperCase(); else btn.textContent = char;
   });
-  document.querySelectorAll('.ck-key[data-action="shift"]').forEach(btn => {
-    btn.classList.toggle('ck-active', ckShift);
-  });
+  document.querySelectorAll('.ck-key[data-action="shift"]').forEach(btn => { btn.classList.toggle('ck-active', ckShift); });
 }
 function ckRender() {
   buildKeyboardDOM();
   const activeLayout = ckNumeric ? 'numpad' : ckLayout;
   document.querySelectorAll('.ck-layout').forEach(el => el.style.display = 'none');
-  const activeEl = $('ck-layout-' + activeLayout);
-  if (activeEl) activeEl.style.display = 'flex';
+  const activeEl = $('ck-layout-' + activeLayout); if (activeEl) activeEl.style.display = 'flex';
   updateKeyboardKeys();
   const langBtn = $('ckLangBtn'), modeBtn = $('ckModeBtn');
   if (ckNumeric) { langBtn.hidden = true; modeBtn.hidden = true; }
   else {
-    langBtn.hidden = ckLayout === 'num';
-    langBtn.textContent = ckLayout === 'en' ? 'EN' : 'РУ';
-    modeBtn.hidden = false;
-    modeBtn.textContent = ckLayout === 'num' ? 'АБВ' : '123';
+    langBtn.hidden = ckLayout === 'num'; langBtn.textContent = ckLayout === 'en' ? 'EN' : 'РУ';
+    modeBtn.hidden = false; modeBtn.textContent = ckLayout === 'num' ? 'АБВ' : '123';
   }
 }
 function ckIsTextInput(t) {
@@ -3391,15 +3608,13 @@ function ckShow(input) {
   ckRender();
   $('customKeyboard').classList.add('ck-on');
   document.body.classList.add('kb-open');
-  const modal = input.closest('.modal');
-  if (modal) modal.classList.add('kb-open');
+  const modal = input.closest('.modal'); if (modal) modal.classList.add('kb-open');
   setTimeout(() => { try { input.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch(e) {} }, 120);
 }
 function ckHide(blurInput = true) {
   if (ckTarget && ckTarget.dataset.ckOrigInputmode !== undefined) {
     const orig = ckTarget.dataset.ckOrigInputmode;
-    if (orig) ckTarget.setAttribute('inputmode', orig);
-    else ckTarget.removeAttribute('inputmode');
+    if (orig) ckTarget.setAttribute('inputmode', orig); else ckTarget.removeAttribute('inputmode');
     delete ckTarget.dataset.ckOrigInputmode;
   }
   if (blurInput && ckTarget && document.activeElement === ckTarget) { try { ckTarget.blur(); } catch(e) {} }
@@ -3489,9 +3704,7 @@ document.querySelectorAll('.modal:not(.custom-confirm) .box').forEach(box => {
   box.addEventListener('touchstart', (e) => {
     if (e.target.closest('input, button, select, textarea, .ck, .font-opt, .theme-item, .list-item, .settings-btn')) return;
     if (box.scrollTop > 0) return;
-    startY = e.touches[0].clientY;
-    isDragging = true;
-    box.style.transition = 'none';
+    startY = e.touches[0].clientY; isDragging = true; box.style.transition = 'none';
   }, { passive: true });
   box.addEventListener('touchmove', (e) => {
     if (!isDragging) return;
@@ -3500,9 +3713,7 @@ document.querySelectorAll('.modal:not(.custom-confirm) .box').forEach(box => {
     if (deltaY > 0 && box.scrollTop === 0) {
       if (e.cancelable) e.preventDefault();
       box.style.transform = `translateY(${deltaY}px)`;
-    } else if (deltaY < 0) {
-      isDragging = false; box.style.transform = ''; box.style.transition = '';
-    }
+    } else if (deltaY < 0) { isDragging = false; box.style.transform = ''; box.style.transition = ''; }
   }, { passive: false });
   box.addEventListener('touchend', () => {
     if (!isDragging) return;
@@ -3511,20 +3722,14 @@ document.querySelectorAll('.modal:not(.custom-confirm) .box').forEach(box => {
     box.style.transition = 'transform 0.3s cubic-bezier(0.32, 0.72, 0, 1)';
     if (deltaY > 100) {
       box.style.transform = `translateY(100%)`;
-      setTimeout(() => {
-        box.closest('.modal').classList.remove('on');
-        box.style.transform = ''; box.style.transition = '';
-      }, 300);
+      setTimeout(() => { box.closest('.modal').classList.remove('on'); box.style.transform = ''; box.style.transition = ''; }, 300);
     } else {
       box.style.transform = 'translateY(0)';
       setTimeout(() => { box.style.transition = ''; }, 300);
     }
     startY = 0; currentY = 0;
   });
-  box.addEventListener('touchcancel', () => {
-    isDragging = false; box.style.transform = ''; box.style.transition = '';
-    startY = 0; currentY = 0;
-  });
+  box.addEventListener('touchcancel', () => { isDragging = false; box.style.transform = ''; box.style.transition = ''; startY = 0; currentY = 0; });
 });
 
 window.openGithub = function(e) {
@@ -3532,12 +3737,8 @@ window.openGithub = function(e) {
   const url = (e && e.currentTarget && e.currentTarget.href) || 'https://github.com/Ravi8O8/Krypta';
   try {
     const w = window.open(url, '_blank', 'noopener,noreferrer');
-    if (!w || w.closed || typeof w.closed === 'undefined') {
-      window.location.href = url;
-    }
-  } catch (err) {
-    try { window.location.href = url; } catch (_) {}
-  }
+    if (!w || w.closed || typeof w.closed === 'undefined') window.location.href = url;
+  } catch (err) { try { window.location.href = url; } catch (_) {} }
 };
 
 (function bindViewerButtonsFast() {
@@ -3547,17 +3748,13 @@ window.openGithub = function(e) {
     if (!btn) return;
     let lastAction = 0;
     btn.addEventListener('touchend', function(e) {
-      e.preventDefault();
-      e.stopPropagation();
+      e.preventDefault(); e.stopPropagation();
       if (Date.now() - lastAction < 350) return;
       lastAction = Date.now();
       if (typeof btn.onclick === 'function') btn.onclick.call(btn, e);
     }, { passive: false });
     btn.addEventListener('click', function(e) {
-      if (Date.now() - lastAction < 350) {
-        e.preventDefault();
-        e.stopPropagation();
-      }
+      if (Date.now() - lastAction < 350) { e.preventDefault(); e.stopPropagation(); }
     });
   });
 })();
