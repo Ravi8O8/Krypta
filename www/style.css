@@ -12,19 +12,19 @@ body[data-theme="light"] {
   --bd:#ececf0; --acc:#7c3aed; --acc-rgb:124,58,237;
   --danger:#ef4444; --danger-rgb:239,68,68;
 }
-body[data-theme="amoled"] {
-  --bg:#000000; --bg-rgb:0,0,0;
-  --card:#0a0a0a; --card-rgb:10,10,10;
-  --txt:#ffffff; --mut:#8a8a92;
-  --bd:#17171a; --acc:#a78bfa; --acc-rgb:167,139,250;
-  --danger:#ff3b30; --danger-rgb:255,59,48;
+body[data-theme="warm"] {
+  --bg:#1a1612; --bg-rgb:26,22,18;
+  --card:#252019; --card-rgb:37,32,25;
+  --txt:#ede3d0; --mut:#9a8a72;
+  --bd:#3a3128; --acc:#e0a572; --acc-rgb:224,165,114;
+  --danger:#e07856; --danger-rgb:224,120,86;
 }
-body[data-theme="nord"] {
-  --bg:#2e3440; --bg-rgb:46,52,64;
-  --card:#3b4252; --card-rgb:59,66,82;
-  --txt:#eceff4; --mut:#d8dee9;
-  --bd:#4c566a; --acc:#88c0d0; --acc-rgb:136,192,208;
-  --danger:#bf616a; --danger-rgb:191,97,106;
+body[data-theme="sepia"] {
+  --bg:#f2ebe0; --bg-rgb:242,235,224;
+  --card:#faf6ee; --card-rgb:250,246,238;
+  --txt:#3a2f23; --mut:#8a7c68;
+  --bd:#e0d3bd; --acc:#b07a4a; --acc-rgb:176,122,74;
+  --danger:#c85a3e; --danger-rgb:200,90,62;
 }
 
 :root {
@@ -148,7 +148,7 @@ header {
 .tile .body svg{width:32px;height:32px;stroke:currentColor;stroke-width:1.5;fill:none;}
 .tile img {
   position:absolute; inset:0; width:100%;height:100%; object-fit:cover;
-  display:block; background:#000; z-index:1; opacity:0; transition:opacity .3s var(--ease);
+  display:block; background:#000; z-index:1; opacity:0; transition:opacity .08s linear;
 }
 .tile img.loaded{opacity:1;}
 
