@@ -57,7 +57,6 @@ body {
   -webkit-font-smoothing:antialiased;
 }
 
-body.is-scrolling .skeleton { animation: none !important; opacity: 0.5 !important; }
 body.is-scrolling .tile, body.is-scrolling #bar, body.is-scrolling header { transition: none !important; }
 
 button {
@@ -163,11 +162,12 @@ header {
 .tile.folder.has-preview .body .lbl.n { color: #fff; text-shadow: 0 1px 2px black; margin-top: auto; }
 .tile.folder.has-preview .folder-preview {
   position: absolute; inset: 0; z-index: 1;
-  display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 2px;
+  display: block;
   pointer-events: none;
 }
 .tile.folder.has-preview .folder-preview .fp-item {
   background: var(--bd); overflow: hidden;
+  width: 100%; height: 100%;
 }
 .tile.folder.has-preview .folder-preview .fp-item img {
   width: 100%; height: 100%; object-fit: cover; opacity: 0.9;
@@ -300,10 +300,10 @@ body[data-view="trash"] #btnEmptyTrash{flex:1;}
 .saved-badge { background:rgba(var(--acc-rgb), 0.15); color:var(--acc); padding:2px 6px; border-radius:4px; font-weight:700; font-size:10px; }
 
 .section-title{font-size:12px;font-weight:700;color:var(--mut);text-transform:uppercase;letter-spacing:0.06em;margin:20px 0 12px;}
-.theme-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;}
+.theme-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;}
 .theme-item{padding:8px;border-radius:var(--r-md);border:2px solid var(--bd);background:var(--card);cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:8px;font-size:12px;font-weight:600;}
 .theme-item.sel{border-color:var(--acc);}
-.theme-preview{width:100%;height:32px;border-radius:8px;display:flex;gap:2px;padding:2px;background:#000;overflow:hidden;}
+.theme-preview{width:100%;height:36px;border-radius:8px;display:flex;gap:2px;padding:2px;background:#000;overflow:hidden;}
 .theme-color{flex:1;border-radius:6px;}
 .font-opt{padding:16px;border:1px solid var(--bd);border-radius:var(--r-md);margin-bottom:8px;cursor:pointer;display:flex;justify-content:space-between;background:var(--card);font-weight:600;font-size:14px;}
 .font-opt.sel{border-color:var(--acc);color:var(--acc);background:color-mix(in srgb,var(--acc) 5%,transparent);}
