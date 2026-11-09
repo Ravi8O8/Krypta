@@ -177,7 +177,7 @@ async function migrateOPFSToNative() {
       f.name || `Файл ${i+1}`,
       `✓${migrated} · ⏭${skipped} · ✗${failed}`
     );
-    if (i % 5 === 0) await nextMacrotask();
+    if (i % 5 === 0) await new Promise(r => setTimeout(r, 20));
   }
 
   try {
@@ -977,16 +977,15 @@ async function extractEntryToNative(zipInfo, entry, fileId) {
   const CHUNK = 1024 * 1024; 
   let isFirst = true;
 
-  const writeChunk = async (uint8array) => {
-    const base64 = await blobToBase64(new Blob([uint8array]));
+  const writeChunk = async (blob) => {
     if (isFirst) {
-      await Filesystem.writeFile({ path, data: base64, directory: 'DOCUMENTS', recursive: true });
+      await Filesystem.writeFile({ path, data: blob, directory: 'DOCUMENTS', recursive: true });
       isFirst = false;
     } else {
-      await Filesystem.appendFile({ path, data: base64, directory: 'DOCUMENTS' });
+      await Filesystem.appendFile({ path, data: blob, directory: 'DOCUMENTS' });
     }
-    // Даем UI потоку отдохнуть, чтобы Android не выдавал ошибку "Приложение не отвечает"
-    await new Promise(r => setTimeout(r, 10));
+    // Пауза 25 мс после каждой записи, чтобы Android не убивал приложение
+    await new Promise(r => setTimeout(r, 25)); 
   };
 
   try {
@@ -994,8 +993,8 @@ async function extractEntryToNative(zipInfo, entry, fileId) {
       let off = 0;
       while (off < entry.compSize) {
         const end = Math.min(off + CHUNK, entry.compSize);
-        const buf = new Uint8Array(await zipInfo.file.slice(dataStart + off, dataStart + end).arrayBuffer());
-        await writeChunk(buf);
+        const blobChunk = zipInfo.file.slice(dataStart + off, dataStart + end);
+        await writeChunk(blobChunk);
         off = end;
         await nextMacrotask();
       }
@@ -1022,7 +1021,7 @@ async function extractEntryToNative(zipInfo, entry, fileId) {
         const merged = new Uint8Array(partsSize);
         let o = 0;
         for (const c of parts) { merged.set(c, o); o += c.length; }
-        await writeChunk(merged);
+        await writeChunk(new Blob([merged]));
         parts = []; partsSize = 0;
       };
       
@@ -1292,16 +1291,33 @@ async function processBgThumbQueue() {
     try {
       const existing = await getThumb(f);
       if (!existing && (f.type === 'image' || f.type === 'video')) {
-        const file = await getFromOPFS(f.fileId) || f.blob;
+        const file = await getFileData(f);
         if (file) {
           const thumb = f.type === 'image'
             ? await generateImageThumbnail(file)
             : await generateVideoThumbnail(file);
-          if (thumb) await saveThumb(f.fileId, thumb);
+          if (thumb) {
+            await saveThumb(f.fileId, thumb);
+            // Обновляем плитку на экране, если она есть
+            const tile = document.querySelector(`.tile[data-file-id="${f.id}"]`);
+            if (tile) {
+              const img = tile.querySelector('.tile-img');
+              if (img) {
+                const url = URL.createObjectURL(thumb);
+                img.src = url;
+                img.onload = () => img.classList.add('loaded');
+                if (tile._blobUrl) URL.revokeObjectURL(tile._blobUrl);
+                tile._blobUrl = url;
+                const skel = tile.querySelector('.skeleton');
+                if (skel) skel.remove();
+                tile.classList.remove('broken');
+              }
+            }
+          }
         }
       }
     } catch(e) {}
-    await nextMacrotask();
+    await new Promise(r => setTimeout(r, 100)); // Даем отдохнуть телефону
   }
   bgThumbRunning = false;
 }
@@ -1474,19 +1490,12 @@ async function getFromOPFS(fileId) {
     const { Filesystem } = window.Capacitor.Plugins;
     try {
       const uri = await Filesystem.getUri({ path: 'Krypta/files/' + fileId, directory: 'DOCUMENTS' });
-      try {
-        const res = await fetch(Capacitor.convertFileSrc(uri.uri));
-        if (res.ok) {
-          const blob = await res.blob();
-          if (blob.size > 0) return blob;
-        }
-      } catch(e) {}
-      
-      const result = await Filesystem.readFile({ path: 'Krypta/files/' + fileId, directory: 'DOCUMENTS' });
-      const binary = atob(result.data);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-      return new Blob([bytes]);
+      const res = await fetch(Capacitor.convertFileSrc(uri.uri));
+      if (res.ok) {
+        const blob = await res.blob();
+        if (blob.size > 0) return blob;
+      }
+      return null;
     } catch(e) { return null; }
   }
   if (!rootDir) return null;
@@ -1570,7 +1579,7 @@ async function saveToOPFSChunked(fileId, file) {
             `${(offset/1048576).toFixed(1)} / ${(total/1048576).toFixed(1)} МБ`);
           await nextMacrotask();
         }
-        await new Promise(r => setTimeout(r, 10)); // Отдых для UI
+        await new Promise(r => setTimeout(r, 25)); 
       }
       return true;
     } catch(e) { console.error('Native save error', e); return false; }
@@ -2161,25 +2170,13 @@ async function loadTileImage(tileEl) {
     const skelEl = tileEl.querySelector('.skeleton');
     let thumb = await getThumb(f);
     let hasFile = !!thumb;
-    if (!thumb && f.type === 'video' && !failedVideoThumbs.has(f.fileId)) {
-      const file = await getFileData(f);
-      if (file) {
-        hasFile = true;
-        thumb = await generateVideoThumbnail(file);
-        if (thumb) await saveThumb(f.fileId, thumb);
-        else failedVideoThumbs.add(f.fileId);
-      }
+    
+    // Убрали скачивание всего файла для генерации превью, чтобы не словить OOM
+    if (!thumb) { 
+      if (skelEl) skelEl.remove(); 
+      return; 
     }
-    if (!thumb && f.type === 'image') {
-      const file = await getFileData(f);
-      if (file) { thumb = file; hasFile = true; queueBgThumb(f); }
-    }
-    if (!hasFile && (f.type === 'image' || f.type === 'video')) {
-      tileEl.classList.add('broken');
-      if (skelEl) skelEl.remove();
-      return;
-    }
-    if (!thumb) { if (skelEl) skelEl.remove(); return; }
+    
     if (!tileEl.isConnected) return;
     const url = URL.createObjectURL(thumb);
     tileEl._blobUrl = url;
@@ -2241,7 +2238,7 @@ async function writeBlobToCacheChunked(blob, cachePath, onProgress) {
     }
     offset = end;
     if (onProgress) onProgress(offset / total);
-    await new Promise(r => setTimeout(r, 10));
+    await new Promise(r => setTimeout(r, 25));
   }
 }
 
@@ -3898,7 +3895,6 @@ window.importFromArchive = async (input) => {
           await new Promise((res, rej) => { t6.oncomplete = res; t6.onerror = e => rej(e.target.error); });
         }
 
-        // ВАЖНО: Принудительно ставим флаг, чтобы приложение не запустило миграцию после импорта
         await setSetting('opfsMigratedToNative', true);
         settingsCache = null;
         hideProgress();
@@ -3994,21 +3990,18 @@ window.importFromArchive = async (input) => {
 
           await extractEntryToOPFS(zipInfo, entry, fileId);
 
+          // ОТКАЗЫВАЕМСЯ ОТ ЧТЕНИЯ ФАЙЛА РАДИ ХЕША
+          // Это вызывало жуткие тормоза и вылеты
           let hash = '';
           let isDuplicate = false;
-          if (sizesInDb.has(entry.uncompSize)) {
-            const fileObj = await getFromOPFS(fileId);
-            try { hash = await calculateHash(fileObj); } catch(e) {}
-            if (hash && existingHashes.has(hash)) isDuplicate = true;
-          }
 
           if (isDuplicate) {
             await deleteFromOPFS(fileId);
             skipped++;
           } else {
-            const fileObj = await getFromOPFS(fileId);
-            const type = fileObj ? detectType(fileObj) : (ARCHIVE_MIME_MAP[ext]?.split('/')[0] === 'image' ? 'image' : 'video');
-            const exifDate = (type === 'image' && fileObj) ? await extractExifDate(fileObj) : null;
+            const type = mime.startsWith('image/') ? 'image' : 'video';
+            // Отказываемся от EXIF при импорте для скорости
+            const exifDate = null; 
             const record = {
               fileId, name: fileName, type, mime,
               size: entry.uncompSize, date: exifDate || Date.now(),
@@ -4018,7 +4011,6 @@ window.importFromArchive = async (input) => {
             };
             pendingRecords.push(record);
             importedFiles.push(record);
-            if (hash && !hash.startsWith('unique_')) existingHashes.add(hash);
             sizesInDb.add(entry.uncompSize);
             imported++;
             if (pendingRecords.length >= FLUSH_SIZE) await flushPending();
@@ -4036,6 +4028,7 @@ window.importFromArchive = async (input) => {
       }
       await flushPending();
 
+      // Ставим в очередь на превью ТОЛЬКО после того как всё записано!
       importedFiles.forEach(f => queueBgThumb(f));
 
       const elapsed = (performance.now() - t0) / 1000;
@@ -4239,16 +4232,16 @@ window.importFromArchive = async (input) => {
 
         let hash = '';
         let isDuplicate = false;
-        if (sizesInDb.has(entry.data.length)) {
+        // Отказываемся от хеширования для скорости
+        if (false) {
           try { hash = await calculateHash(fileObj); } catch(e) {}
-          if (hash && existingHashes.has(hash)) isDuplicate = true;
         }
 
         if (isDuplicate) { skipped++; }
         else {
           const fileId = generateId();
-          const type = detectType(fileObj);
-          const exifDate = (type === 'image') ? await extractExifDate(fileObj) : null;
+          const type = mime.startsWith('image/') ? 'image' : 'video';
+          const exifDate = null; 
           const record = {
             fileId, name: fileName, type, mime,
             size: entry.data.length, date: exifDate || Date.now(),
@@ -4263,7 +4256,6 @@ window.importFromArchive = async (input) => {
             else {
               pendingRecords.push(record);
               importedFiles.push(record);
-              if (hash && !hash.startsWith('unique_')) existingHashes.add(hash);
               sizesInDb.add(entry.data.length);
               imported++;
               if (pendingRecords.length >= FLUSH_SIZE) await flushBatch();
@@ -4272,7 +4264,6 @@ window.importFromArchive = async (input) => {
             record.blob = fileObj;
             pendingRecords.push(record);
             importedFiles.push(record);
-            if (hash && !hash.startsWith('unique_')) existingHashes.add(hash);
             sizesInDb.add(entry.data.length);
             imported++;
             if (pendingRecords.length >= FLUSH_SIZE) await flushBatch();
