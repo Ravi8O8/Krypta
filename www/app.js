@@ -1,7 +1,6 @@
 const DB_NAME='MediaVault_Final', DB_VERSION=33;
 const SF='files', SFL='folders', SS='settings';
 const PAGE_SIZE = 30;
-const BG_FILE_ID = 'custom-bg';
 const THUMB_PREFIX = 'thumb_';
 const DEFAULT_SLIDESHOW_MS = 3000;
 const DEFAULT_TRASH_DAYS = 30;
@@ -34,8 +33,6 @@ let sortBy='date_desc', isLocked=false, storedHash='', storedSalt='';
 let pressTimer=null, isLongPress=false;
 let galleryFiles=[], currentGalleryIndex=0;
 let rootDir = null;
-let bgObjectUrl = null;
-let bgPreviewObjectUrl = null;
 let slideshowTimer = null;
 let slideshowActive = false;
 let slideshowInterval = DEFAULT_SLIDESHOW_MS;
@@ -57,15 +54,10 @@ let scrollTimeout = null;
 
 let editIsFolder = true;
 let editId = null;
-let batchMode = false;
 
 let isDragSelecting = false;
 let lastHoveredTile = null;
 let lastDragTime = 0;
-
-let pinchStartDist = 0;
-let pinchActive = false;
-let pinchEndTime = 0;
 
 let searchTimer = null;
 let scrollRaf = null;
@@ -142,7 +134,6 @@ document.addEventListener('pointerdown', (e) => {
   }
 }, { passive: true });
 
-// Предупреждение при закрытии во время операции
 window.addEventListener('beforeunload', (e) => {
   if (currentOperation) {
     e.preventDefault();
@@ -211,9 +202,6 @@ const nextMacrotask = (() => {
   });
 })();
 
-// ============================================================
-// KEEP-ALIVE
-// ============================================================
 let _kaEl = null, _kaRaf = null, _kaRunning = false, _kaI = 0;
 function startKeepAlive() {
   if (_kaRunning) return;
@@ -295,9 +283,6 @@ function formatEta(current, total, elapsedMs) {
   return `~${Math.round(seconds / 60)} мин`;
 }
 
-// ============================================================
-// PROGRESS (throttled)
-// ============================================================
 function showProgress(title, percent, file, eta, force = false) {
   const now = Date.now();
   const isMilestone = (percent === 0 || percent === 100);
@@ -306,7 +291,6 @@ function showProgress(title, percent, file, eta, force = false) {
   $('progTitle').textContent = title; $('progPercent').textContent = percent + '%';
   $('progFill').style.width = percent + '%'; $('progFile').textContent = file; $('progEta').textContent = eta;
   $('progressDrawer').classList.add('on');
-  // Отложенный Keep-Alive: только если операция длится > 1 сек
   if (!_keepAliveTimer && !_kaRunning) {
     _keepAliveTimer = setTimeout(() => { _keepAliveTimer = null; startKeepAlive(); }, 1000);
   }
@@ -318,9 +302,6 @@ function hideProgress() {
   lastProgressUpdate = 0;
 }
 
-// ============================================================
-// ABORT helpers
-// ============================================================
 function startAbortableOperation(type, title) {
   currentOperation = { type, title, abort: false };
   $('progCancelBtn').style.display = 'flex';
@@ -340,9 +321,6 @@ $('progCancelBtn').onclick = () => {
   }
 };
 
-// ============================================================
-// Проверка свободного места
-// ============================================================
 async function checkFreeSpace(requiredBytes, label) {
   if (!navigator.storage || !navigator.storage.estimate) return true;
   try {
@@ -361,9 +339,7 @@ async function checkFreeSpace(requiredBytes, label) {
     return true;
   } catch(e) { return true; }
 }
-// ============================================================
-// TOAST + UNDO
-// ============================================================
+
 let pendingUndo = null;
 
 function toast(title, sub='', isError=false) {
@@ -631,6 +607,7 @@ async function writeStreamingZip(writable, items, onProgress) {
   eocdDV.setUint32(16, needsZip64 ? 0xFFFFFFFF : cdStart, true);
   await writable.write(eocd);
 }
+
 async function parseZip(blob) {
   const buf = new Uint8Array(await blob.arrayBuffer());
   const dv = new DataView(buf.buffer);
@@ -890,7 +867,6 @@ async function extractExifDate(file) {
   if (file.size < 32) return null;
   try {
     const head = new Uint8Array(await file.slice(0, Math.min(file.size, 128 * 1024)).arrayBuffer());
-    // JPEG: FFD8
     if (head[0] === 0xFF && head[1] === 0xD8) {
       const str = new TextDecoder('latin1').decode(head);
       const m = str.match(/(\d{4})[:\-](\d{2})[:\-](\d{2})[ T](\d{2})[:\-](\d{2})[:\-](\d{2})/);
@@ -900,13 +876,11 @@ async function extractExifDate(file) {
         if (!isNaN(ts) && ts >= Date.UTC(1990) && ts <= Date.now() + 86400000) return ts;
       }
     }
-    // HEIC/HEIF: ftyp в позиции 4
     if (head.length >= 12 && head[4] === 0x66 && head[5] === 0x74 && head[6] === 0x79 && head[7] === 0x70) {
       if (file.lastModified && file.lastModified >= Date.UTC(1990) && file.lastModified <= Date.now() + 86400000) {
         return file.lastModified;
       }
     }
-    // Fallback: lastModified
     if (file.lastModified && file.lastModified >= Date.UTC(1990) && file.lastModified <= Date.now() + 86400000) {
       return file.lastModified;
     }
@@ -968,67 +942,27 @@ async function generateVideoThumbnail(file, maxSize = 300) {
     };
     const timeout = setTimeout(() => finish(null), 12000);
 
-    const measureBrightness = (time) => new Promise((res) => {
-      const onSeek = () => {
-        video.removeEventListener('seeked', onSeek);
-        try {
-          const w = video.videoWidth, h = video.videoHeight;
-          if (!w || !h) { res(null); return; }
-          const minSide = Math.min(w, h);
-          const c = document.createElement('canvas');
-          c.width = 64; c.height = 64;
-          const ctx = c.getContext('2d', { willReadFrequently: true });
-          ctx.drawImage(video, (w-minSide)/2, (h-minSide)/2, minSide, minSide, 0, 0, 64, 64);
-          const d = ctx.getImageData(0, 0, 64, 64).data;
-          let sum = 0;
-          for (let i = 0; i < d.length; i += 4) sum += (d[i] + d[i+1] + d[i+2]) / 3;
-          res(sum / (64*64));
-        } catch(e) { res(null); }
-      };
-      try { video.currentTime = time; video.addEventListener('seeked', onSeek, { once: true }); }
-      catch(e) { res(null); }
-    });
-
-    const captureFrame = (time) => new Promise((res) => {
-      const onSeek = () => {
-        video.removeEventListener('seeked', onSeek);
-        try {
-          const w = video.videoWidth, h = video.videoHeight;
-          if (!w || !h) { res(null); return; }
-          const minSide = Math.min(w, h);
-          const c = document.createElement('canvas');
-          c.width = maxSize; c.height = maxSize;
-          c.getContext('2d').drawImage(video, (w-minSide)/2, (h-minSide)/2, minSide, minSide, 0, 0, maxSize, maxSize);
-          c.toBlob(b => res(b), 'image/jpeg', 0.78);
-        } catch(e) { res(null); }
-      };
-      try { video.currentTime = time; video.addEventListener('seeked', onSeek, { once: true }); }
-      catch(e) { res(null); }
-    });
-
-    video.onloadedmetadata = async () => {
+    video.onloadedmetadata = () => {
       try {
         const dur = video.duration;
-        if (!isFinite(dur) || dur <= 0) { finish(null); return; }
-        // Для видео > 5 минут — только 2 кадра (экономия времени)
-        let times;
-        if (dur > 300) {
-          times = [dur * 0.15, dur * 0.6];
-        } else {
-          times = [dur * 0.1, dur * 0.25, dur * 0.5, dur * 0.75].filter(t => t > 0.1 && t < dur - 0.1);
-        }
-        if (times.length === 0) times.push(Math.min(dur / 2, dur - 0.1));
-        let bestTime = times[0];
-        let bestB = -1;
-        for (const t of times) {
-          const b = await measureBrightness(t);
-          if (b !== null && b > bestB) { bestB = b; bestTime = t; }
-        }
-        const blob = await captureFrame(bestTime);
-        clearTimeout(timeout);
-        finish(blob);
+        if (!isFinite(dur) || dur <= 0) { clearTimeout(timeout); finish(null); return; }
+        const seekTime = Math.min(dur * 0.25, dur - 0.1);
+        video.currentTime = Math.max(0.1, seekTime);
       } catch(e) { clearTimeout(timeout); finish(null); }
     };
+
+    video.onseeked = () => {
+      try {
+        const w = video.videoWidth, h = video.videoHeight;
+        if (!w || !h) { clearTimeout(timeout); finish(null); return; }
+        const minSide = Math.min(w, h);
+        const c = document.createElement('canvas');
+        c.width = maxSize; c.height = maxSize;
+        c.getContext('2d').drawImage(video, (w-minSide)/2, (h-minSide)/2, minSide, minSide, 0, 0, maxSize, maxSize);
+        c.toBlob(b => { clearTimeout(timeout); finish(b); }, 'image/jpeg', 0.78);
+      } catch(e) { clearTimeout(timeout); finish(null); }
+    };
+
     video.onerror = () => { clearTimeout(timeout); finish(null); };
     video.src = url;
     try { video.load(); } catch(e) {}
@@ -1089,7 +1023,6 @@ async function loadFolderPreview(folderId, tileEl) {
     if (valid.length === 0) return;
     const previewEl = tileEl.querySelector('.folder-preview');
     if (!previewEl) return;
-    // Параллельная загрузка всех превью разом
     const thumbs = await Promise.all(valid.map(f => getThumb(f)));
     let loaded = 0;
     for (let i = 0; i < valid.length; i++) {
@@ -1111,85 +1044,6 @@ async function loadFolderPreview(folderId, tileEl) {
     }
   } catch(e) { console.warn('Folder preview error', e); }
 }
-async function applyBackground(bgFile = undefined) {
-  const s = await getAllSettings();
-  const enabled = s.bgEnabled;
-  const opacity = Number(s.bgOpacity ?? 85);
-  document.documentElement.style.setProperty('--bg-overlay', (opacity / 100).toFixed(2));
-  if (!enabled) {
-    document.body.classList.remove('has-bg');
-    document.documentElement.style.removeProperty('--bg-image');
-    if (bgObjectUrl) { try { URL.revokeObjectURL(bgObjectUrl); } catch(e) {} bgObjectUrl = null; }
-    return;
-  }
-  if (bgFile === undefined) bgFile = await getFromOPFS(BG_FILE_ID);
-  if (!bgFile) { document.body.classList.remove('has-bg'); document.documentElement.style.removeProperty('--bg-image'); return; }
-  if (bgObjectUrl) { try { URL.revokeObjectURL(bgObjectUrl); } catch(e) {} }
-  bgObjectUrl = URL.createObjectURL(bgFile);
-  document.documentElement.style.setProperty('--bg-image', `url("${bgObjectUrl}")`);
-  document.body.classList.add('has-bg');
-}
-async function updateBgPreview(bgFile = undefined) {
-  const s = await getAllSettings();
-  const enabled = s.bgEnabled;
-  if (bgFile === undefined) bgFile = await getFromOPFS(BG_FILE_ID);
-  const previewEl = $('bgPreviewImg'), removeBtn = $('bgRemoveBtn'), pickerBtn = $('bgPickerBtn');
-  if (bgPreviewObjectUrl) { try { URL.revokeObjectURL(bgPreviewObjectUrl); } catch(e) {} bgPreviewObjectUrl = null; }
-  if (!previewEl) return;
-  previewEl.style.backgroundImage = '';
-  if (enabled && bgFile) {
-    bgPreviewObjectUrl = URL.createObjectURL(bgFile);
-    previewEl.style.backgroundImage = `url("${bgPreviewObjectUrl}")`;
-    previewEl.innerHTML = '';
-    if (removeBtn) removeBtn.style.display = 'flex';
-    if (pickerBtn) { const span = pickerBtn.querySelector('span'); if (span) span.textContent = 'Сменить фон'; }
-  } else {
-    previewEl.innerHTML = ICONS.imageIcon;
-    if (removeBtn) removeBtn.style.display = 'none';
-    if (pickerBtn) { const span = pickerBtn.querySelector('span'); if (span) span.textContent = 'Выбрать фон'; }
-  }
-}
-$('bgPickerBtn').onclick = () => { $('bgFileInput').value = ''; $('bgFileInput').click(); };
-$('bgRemoveBtn').onclick = async () => {
-  if (!await showConfirm('Фон', 'Убрать фоновое изображение?')) return;
-  await setSetting('bgEnabled', false);
-  await applyBackground();
-  await updateBgPreview();
-  toast('Готово', 'Фон убран');
-};
-$('bgFileInput').onchange = async e => {
-  const file = e.target.files[0]; e.target.value = '';
-  if (!file) return;
-  if (!file.type.startsWith('image/')) return toast('Ошибка', 'Только изображения', true);
-  showProgress('Фон', 20, 'Обработка...', '...', true);
-  try {
-    const url0 = URL.createObjectURL(file);
-    const img = await new Promise((res, rej) => { const i = new Image(); i.onload=()=>res(i); i.onerror=()=>rej(new Error('Ошибка')); i.src=url0; });
-    const MAX = 1920; let w=img.width, h=img.height;
-    if (w > MAX || h > MAX) { if (w>h){h=Math.round(h*MAX/w);w=MAX;} else {w=Math.round(w*MAX/h);h=MAX;} }
-    showProgress('Фон', 45, 'Сжатие...', '...');
-    const canvas = document.createElement('canvas'); canvas.width=w; canvas.height=h;
-    canvas.getContext('2d').drawImage(img,0,0,w,h);
-    const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.85));
-    URL.revokeObjectURL(url0);
-    if (!blob) throw new Error('Ошибка сжатия');
-    if (!rootDir) throw new Error('Хранилище недоступно');
-    showProgress('Фон', 75, 'Сохранение...', '...');
-    const fh = await rootDir.getFileHandle(BG_FILE_ID, { create: true });
-    const wr = await fh.createWritable(); await wr.write(blob); await wr.close();
-    await setSetting('bgEnabled', true);
-    const bgFile = await getFromOPFS(BG_FILE_ID);
-    await applyBackground(bgFile); await updateBgPreview(bgFile);
-    showProgress('Фон', 100, 'Готово', '...', true); setTimeout(hideProgress, 350);
-    toast('Успешно', 'Фон установлен');
-  } catch (err) { console.error(err); hideProgress(); toast('Ошибка', err.message || 'Ошибка', true); }
-};
-$('bgOpacityRange').oninput = e => {
-  const v = Number(e.target.value);
-  $('bgOpacityVal').textContent = v + '%';
-  document.documentElement.style.setProperty('--bg-overlay', (v / 100).toFixed(2));
-};
-$('bgOpacityRange').onchange = async e => { await setSetting('bgOpacity', Number(e.target.value)); };
 
 $('slideshowIntRange').oninput = e => {
   const sec = Number(e.target.value);
@@ -1395,6 +1249,7 @@ function detectType(file) {
   return 'other';
 }
 const TYPE_LABEL = {image:'Фото', video:'Видео', other:'Файл'};
+
 async function moveToTrash(fileIds, folderIds) {
   const now = Date.now();
   const allFolders = await getAllFolders();
@@ -1692,7 +1547,6 @@ async function compactDB() {
       try {
         const toRemove = [];
         for await (const name of rootDir.keys()) {
-          if (name === BG_FILE_ID) continue;
           if (name.startsWith(THUMB_PREFIX)) {
             const fid = name.substring(THUMB_PREFIX.length);
             if (!validFileIds.has(fid)) toRemove.push(name);
@@ -1823,7 +1677,6 @@ async function loadTileImage(tileEl) {
       if (file) { thumb = file; hasFile = true; queueBgThumb(f); }
     }
     if (!hasFile && (f.type === 'image' || f.type === 'video')) {
-      // Битый файл — blob'а нет
       tileEl.classList.add('broken');
       if (skelEl) skelEl.remove();
       return;
@@ -2268,7 +2121,6 @@ function sortList(arr) {
 }
 async function refresh() {
   if(isLocked) return;
-  // Очистка фоновой очереди при смене контекста
   bgThumbQueue = [];
   const [files, folders] = await Promise.all([getAllFiles(), getAllFolders()]);
   allActiveFilesCache = files.filter(f => !f.deleted);
@@ -2440,20 +2292,13 @@ $('btnUp').onclick = () => window.scrollTo({top: 0, behavior: 'smooth'});
 
 const gridEl = $('grid');
 gridEl.addEventListener('touchstart', e => {
-  if (e.touches.length === 2) {
-    pinchActive = true; clearTimeout(pressTimer);
-    isLongPress = false; isDragSelecting = false; isScrolling = false;
-    lastHoveredTile = null; document.body.classList.remove('selecting');
-    pinchStartDist = Math.hypot(e.touches[0].clientX-e.touches[1].clientX, e.touches[0].clientY-e.touches[1].clientY);
-    return;
-  }
   const tile = e.target.closest('.tile'); if (!tile) return;
   isLongPress = false; isScrolling = false; isDragSelecting = false;
   lastHoveredTile = null;
   startX = e.touches[0].clientX; startY = e.touches[0].clientY;
   clearTimeout(pressTimer);
   pressTimer = setTimeout(() => {
-    if (!isScrolling && !pinchActive) {
+    if (!isScrolling) {
       isLongPress = true; isDragSelecting = true;
       document.body.classList.add('selecting');
       const id = Number(tile.dataset.id), type = tile.dataset.type;
@@ -2466,21 +2311,6 @@ gridEl.addEventListener('touchstart', e => {
   }, 500);
 }, {passive:true});
 gridEl.addEventListener('touchmove', e => {
-  if (e.touches.length === 2 && !pinchActive) {
-    pinchActive = true; clearTimeout(pressTimer);
-    isLongPress = false; isDragSelecting = false; isScrolling = false;
-    lastHoveredTile = null; document.body.classList.remove('selecting');
-    pinchStartDist = Math.hypot(e.touches[0].clientX-e.touches[1].clientX, e.touches[0].clientY-e.touches[1].clientY);
-    return;
-  }
-  if (e.touches.length === 2 && pinchActive) {
-    e.preventDefault();
-    const dist = Math.hypot(e.touches[0].clientX-e.touches[1].clientX, e.touches[0].clientY-e.touches[1].clientY);
-    const ratio = dist / pinchStartDist;
-    if (ratio > 1.3) { changeGridSize(-1); pinchStartDist = dist; }
-    else if (ratio < 0.75) { changeGridSize(1); pinchStartDist = dist; }
-    return;
-  }
   if (!e.touches[0]) return;
   const currentX = e.touches[0].clientX, currentY = e.touches[0].clientY;
   if (isDragSelecting) {
@@ -2507,13 +2337,6 @@ gridEl.addEventListener('touchmove', e => {
 gridEl.addEventListener('touchend', e => {
   clearTimeout(pressTimer);
   if (e.touches.length > 0) return;
-  if (pinchActive) {
-    pinchActive = false; pinchEndTime = Date.now();
-    isLongPress = false; isDragSelecting = false; isScrolling = false;
-    document.body.classList.remove('selecting');
-    return;
-  }
-  if (Date.now() - pinchEndTime < 500) { isLongPress = false; isDragSelecting = false; return; }
   document.body.classList.remove('selecting');
   const wasLongPress = isLongPress;
   isDragSelecting = false;
@@ -2534,18 +2357,10 @@ gridEl.addEventListener('touchend', e => {
   }
 });
 gridEl.addEventListener('touchcancel', e => {
-  clearTimeout(pressTimer); pinchActive = false;
+  clearTimeout(pressTimer);
   isLongPress = false; isDragSelecting = false; isScrolling = false;
-  document.body.classList.remove('selecting'); pinchEndTime = Date.now();
+  document.body.classList.remove('selecting');
 });
-let gridSizes = ['repeat(2, 1fr)', 'repeat(3, 1fr)', 'repeat(4, 1fr)'];
-async function changeGridSize(delta) {
-  const cur = await getSetting('cols') || 'repeat(3, 1fr)';
-  let idx = gridSizes.indexOf(cur);
-  if (idx === -1) idx = 1;
-  idx = Math.max(0, Math.min(gridSizes.length-1, idx + delta));
-  if (gridSizes[idx] !== cur) await setCols(gridSizes[idx]);
-}
 function clearSel() {
   sel.clear(); folderSel.clear();
   document.querySelectorAll('.tile.sel').forEach(e=>e.classList.remove('sel'));
@@ -2557,13 +2372,13 @@ function updateUI() {
   const inTrash = viewMode === 'trash';
   const trashEmpty = (trashFilesCache.length + trashFoldersCache.length) === 0;
   $('bar').style.display = hasSel ? 'none' : 'flex';
-  // Скрываем "Очистить", если корзина пуста
   $('btnEmptyTrash').style.display = (inTrash && !trashEmpty) ? 'flex' : 'none';
   $('ctxMenu').classList.toggle('on', hasSel);
   $('ctxRow1').style.display = inTrash ? 'none' : 'grid';
   $('ctxRow2').style.display = inTrash ? 'none' : 'grid';
   $('ctxRowTrash').style.display = inTrash ? 'grid' : 'none';
-  $('ctxRename').disabled = totalSel !== 1 && sel.size === 0;
+  $('ctxRename').disabled = totalSel !== 1;
+  $('ctxRename').querySelector('.ctx-label').textContent = 'Имя';
   $('ctxInfo').disabled = totalSel !== 1;
   $('ctxDownload').disabled = sel.size === 0 && folderSel.size === 0;
   $('ctxFav').disabled = sel.size === 0;
@@ -2573,8 +2388,6 @@ function updateUI() {
   if(sel.size>0 && folderSel.size===0 && !inTrash) {
     $('ctxCompress').disabled = !currentFilesCache.filter(f=>sel.has(f.id)).some(f=>f.type==='image');
   } else $('ctxCompress').disabled=true;
-  if (sel.size > 1) { $('ctxRename').disabled = false; $('ctxRename').querySelector('.ctx-label').textContent = 'Пакетно'; }
-  else $('ctxRename').querySelector('.ctx-label').textContent = 'Имя';
   if (sel.size > 0) {
     const files = currentFilesCache.filter(f => sel.has(f.id));
     const allFav = files.every(f => f.fav);
@@ -2650,23 +2463,49 @@ $('file').onchange = async e => {
   try {
     const existingFiles = await getAllFiles();
     const existingHashes = new Set(existingFiles.filter(f => !f.deleted).map(f => f.hash).filter(h => h && !h.startsWith('unique_')));
-    for(let i=0; i<files.length; i++) {
+
+    const prepared = [];
+    let duplicateCount = 0;
+    for (let i = 0; i < files.length; i++) {
       checkAbort();
       const file = files[i];
-      if (file.type === 'image/gif' || file.name.toLowerCase().endsWith('.gif')) { toast('Ошибка', 'GIF не поддерживаются', true); continue; }
-      showProgress(`Проверка ${i+1} из ${files.length}`, 0, file.name, 'Поиск дубликатов...');
+      if (file.type === 'image/gif' || file.name.toLowerCase().endsWith('.gif')) {
+        toast('Ошибка', 'GIF не поддерживаются', true);
+        continue;
+      }
+      showProgress(`Проверка ${i+1} из ${files.length}`, Math.round(((i+1) / files.length) * 30), file.name, 'Поиск дубликатов...');
       await nextMacrotask();
       let hash = '';
       try { hash = await calculateHash(file); } catch(e){}
-      if (hash && existingHashes.has(hash)) {
-        if (!await showConfirm('Дубликат', `Файл <b>"${file.name}"</b> уже есть.<br><br>Добавить копию?`, 'Добавить', 'Пропустить')) continue;
+      const isDup = !!(hash && existingHashes.has(hash));
+      if (isDup) {
+        duplicateCount++;
+      } else if (hash && !hash.startsWith('unique_')) {
+        existingHashes.add(hash);
       }
-      showProgress(`Сохранение ${i+1} из ${files.length}`, 0, file.name, '...');
+      prepared.push({ file, hash, isDup });
+    }
+
+    let toAdd = prepared;
+    if (duplicateCount > 0) {
+      const skip = await showConfirm(
+        'Дубликаты',
+        `Найдено <b>${duplicateCount}</b> ${duplicateCount === 1 ? 'дубликат' : (duplicateCount < 5 ? 'дубликата' : 'дубликатов')}.<br><br>Пропустить их?`,
+        'Пропустить',
+        'Добавить всё'
+      );
+      if (skip) toAdd = prepared.filter(x => !x.isDup);
+    }
+
+    for (let i = 0; i < toAdd.length; i++) {
+      checkAbort();
+      const { file, hash } = toAdd[i];
+      showProgress(`Сохранение ${i+1} из ${toAdd.length}`, 0, file.name, '...');
       await nextMacrotask();
       const newId = await addFile(file, hash);
       if (detectType(file) === 'image') addedImageIds.push(newId);
-      if (hash && !hash.startsWith('unique_')) existingHashes.add(hash);
     }
+
     await refresh();
     const allNow = await getAllFiles();
     allNow.filter(f => !f.deleted).forEach(f => {
@@ -2702,34 +2541,22 @@ function buildColorPalette(selected) {
     wrap.appendChild(el);
   });
 }
-function openEditModal(title, val, isFolder, id=null, color=null, isBatch=false) {
-  editIsFolder = isFolder; editId = id; batchMode = isBatch;
+
+function openEditModal(title, val, isFolder, id=null, color=null) {
+  editIsFolder = isFolder; editId = id;
   $('meTitle').textContent = title; $('meName').value = val || '';
-  $('batchWrap').style.display = isBatch ? 'block' : 'none';
-  $('colorPickerWrap').style.display = (isFolder && !isBatch) ? 'block' : 'none';
-  if (isFolder && !isBatch) { selectedFolderColor = color || FOLDER_COLORS[0]; buildColorPalette(selectedFolderColor); }
-  else if (isBatch) { $('meName').value = 'Photo_#'; }
+  $('colorPickerWrap').style.display = isFolder ? 'block' : 'none';
+  if (isFolder) { selectedFolderColor = color || FOLDER_COLORS[0]; buildColorPalette(selectedFolderColor); }
   $('ctxMenu').classList.remove('on');
   $('modalEdit').classList.add('on');
   setTimeout(() => $('meName').focus(), 150);
 }
-$('btnFolder').onclick = () => { editId = null; batchMode = false; openEditModal('Новая папка', '', true); };
+$('btnFolder').onclick = () => { editId = null; openEditModal('Новая папка', '', true); };
 $('meCancel').onclick = () => $('modalEdit').classList.remove('on');
 $('meOk').onclick = async () => {
   const n = $('meName').value.trim();
   if(!n) return toast('Ошибка','Введите название',true);
-  if (batchMode) {
-    const files = currentFilesCache.filter(f => sel.has(f.id));
-    const sorted = sortList([...files]);
-    const s = st(SF, 'readwrite');
-    for (let i = 0; i < sorted.length; i++) {
-      const f = sorted[i];
-      const newName = n.includes('#') ? n.replace(/#/g, String(i+1)) : `${n}_${i+1}`;
-      const v = await p(s.get(f.id));
-      if (v) { v.name = newName; await p(s.put(v)); }
-    }
-    toast('Успешно', `Переименовано ${sorted.length} файлов`);
-  } else if (editId !== null && editId !== undefined) {
+  if (editId !== null && editId !== undefined) {
     if (editIsFolder) await updateFolderFull(editId, n, selectedFolderColor);
     else await renameItem(SF, editId, n);
     toast('Успешно','Сохранено');
@@ -2737,15 +2564,15 @@ $('meOk').onclick = async () => {
     await addFolder(n, currentFolder, selectedFolderColor);
     toast('Успешно','Папка создана');
   }
-  editId = null; batchMode = false;
+  editId = null;
   $('modalEdit').classList.remove('on');
   clearSel(); refresh();
 };
 $('meName').addEventListener('keydown', e => { if (e.key === 'Enter') $('meOk').click(); });
 async function renameItem(store, id, name) { const s=st(store,'readwrite'); const v=await p(s.get(id)); if(v){ v.name=name; await p(s.put(v)); } }
 async function updateFolderFull(id, name, color) { const s=st(SFL,'readwrite'); const v=await p(s.get(id)); if(v){ v.name=name; v.color=color; await p(s.put(v)); } }
+
 $('ctxRename').onclick = async () => {
-  if (sel.size > 1) { openEditModal('Пакетное переименование', 'Photo_#', false, null, null, true); return; }
   if(sel.size+folderSel.size!==1) return;
   try {
     if(sel.size) { const f = await p(st(SF,'readonly').get([...sel][0])); if(!f) return toast('Ошибка', 'Не найдено', true); openEditModal('Переименовать', f.name, false, f.id); }
@@ -3197,34 +3024,6 @@ $('tagAddBtn').onclick = async () => {
 };
 $('tagInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('tagAddBtn').click(); } });
 $('tagClose').onclick = () => { $('modalTags').classList.remove('on'); clearSel(); };
-$('btnRandom').onclick = async () => {
-  if (isLocked) return;
-  let curFiles = [...currentFilesCache];
-  if (filterType === 'image') curFiles = curFiles.filter(f => f.type === 'image');
-  else if (filterType === 'video') curFiles = curFiles.filter(f => f.type === 'video');
-  else if (filterType === 'fav') curFiles = curFiles.filter(f => f.fav);
-  if (searchQuery) {
-    const q = searchQuery.toLowerCase();
-    curFiles = curFiles.filter(f => f.name.toLowerCase().includes(q) || (f.tags && f.tags.some(t => t.toLowerCase().includes(q))));
-  }
-  curFiles = curFiles.filter(f => f.type === 'image' || f.type === 'video');
-  if (curFiles.length < 2) return toast('Рандом', 'Нужно минимум 2 фото или видео', true);
-  for (let i = curFiles.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [curFiles[i], curFiles[j]] = [curFiles[j], curFiles[i]];
-  }
-  galleryFiles = curFiles;
-  currentGalleryIndex = 0;
-  slideshowActive = true;
-  const btn = $('viewerSlideshow');
-  if (btn) { btn.innerHTML = ICONS.pause; btn.classList.add('active'); }
-  $('viewerDelete').style.display = 'none';
-  await renderViewer();
-  if (galleryFiles[currentGalleryIndex] && galleryFiles[currentGalleryIndex].type !== 'video') {
-    scheduleSlideshowNext(galleryFiles[currentGalleryIndex]);
-  }
-  toast('Рандом', `Запущено ${curFiles.length} файлов`);
-};
 
 $('btnSort').onclick = () => {
   document.querySelectorAll('#modalSort .list-item').forEach(el=>{
@@ -3251,11 +3050,6 @@ async function loadTheme() {
   if (!ALLOWED_THEMES.includes(t)) { t = 'dark'; await setSetting('theme', 'dark'); }
   const c = s.cols || 'repeat(3, 1fr)';
   await setTheme(t); await setCols(c);
-  const opacity = Number(s.bgOpacity ?? 85);
-  $('bgOpacityRange').value = opacity;
-  $('bgOpacityVal').textContent = opacity + '%';
-  const bgFile = await getFromOPFS(BG_FILE_ID);
-  await applyBackground(bgFile); await updateBgPreview(bgFile);
   const savedSlideshowMs = Number(s.slideshowInterval ?? DEFAULT_SLIDESHOW_MS);
   slideshowInterval = savedSlideshowMs;
   const sec = Math.round(savedSlideshowMs / 1000);
@@ -3273,8 +3067,6 @@ $('btnSettings').onclick = async () => {
   $('modalSettings').classList.add('on');
   await updateStorageInfo();
   await updateStatistics();
-  const bgFile = await getFromOPFS(BG_FILE_ID);
-  await updateBgPreview(bgFile);
   const trashDays = await getTrashAutoDays();
   updateTrashAutoPillsUI(trashDays);
 };
@@ -3311,8 +3103,6 @@ window.exportAllData = async () => {
         version: DB_VERSION, exportedAt: Date.now(), files, folders, settings
       }))])
     });
-    const bgFile = await getFromOPFS(BG_FILE_ID);
-    if (bgFile) items.push({ name: 'background.jpg', blob: bgFile });
     for (const f of files) {
       items.push({ name: `files/${f.fileId}`, getBlob: async () => (await getFromOPFS(f.fileId)) || f.blob || null });
     }
@@ -3407,17 +3197,6 @@ window.importFromArchive = async (input) => {
         await acquireWakeLock();
         const basePath = metadataEntry.name.substring(0, metadataEntry.name.length - 'metadata.json'.length);
         const entryMap = new Map(zipInfo.entries.map(e => [e.name, e]));
-
-        const bgEntry = entryMap.get(basePath + 'background.jpg');
-        if (bgEntry && rootDir) {
-          try {
-            const fh = await rootDir.getFileHandle(BG_FILE_ID, { create: true });
-            const wr = await fh.createWritable();
-            const bgData = await extractEntryToBuffer(zipInfo, bgEntry);
-            await wr.write(new Blob([bgData]));
-            await wr.close();
-          } catch(e) { console.warn('BG restore failed', e); }
-        }
 
         const totalFiles = metadata.files.length;
         let i = 0;
@@ -3630,16 +3409,6 @@ window.importFromArchive = async (input) => {
       await acquireWakeLock();
       const basePath = metadataEntry.name.substring(0, metadataEntry.name.length - 'metadata.json'.length);
       const entryMap = new Map(entries.map(e => [e.name, e]));
-
-      const bgEntry = entryMap.get(basePath + 'background.jpg');
-      if (bgEntry && rootDir) {
-        try {
-          const fh = await rootDir.getFileHandle(BG_FILE_ID, { create: true });
-          const wr = await fh.createWritable();
-          await wr.write(new Blob([bgEntry.data]));
-          await wr.close();
-        } catch(e) {}
-      }
 
       const totalFiles = metadata.files.length;
       let i = 0;
@@ -3855,6 +3624,7 @@ window.importFromArchive = async (input) => {
 };
 
 $('archiveImportFile').onchange = function () { if (this.files && this.files[0]) importFromArchive(this); };
+
 let ckTarget = null;
 let ckLayout = 'ru';
 let ckShift = false;
@@ -4087,30 +3857,10 @@ window.openGithub = function(e) {
   } catch (err) { try { window.location.href = url; } catch (_) {} }
 };
 
-(function bindViewerButtonsFast() {
-  const ids = ['viewerClose', 'viewerSlideshow', 'viewerDownload', 'viewerInfo', 'viewerDelete'];
-  ids.forEach(id => {
-    const btn = document.getElementById(id);
-    if (!btn) return;
-    let lastAction = 0;
-    btn.addEventListener('touchend', function(e) {
-      e.preventDefault(); e.stopPropagation();
-      if (Date.now() - lastAction < 350) return;
-      lastAction = Date.now();
-      if (typeof btn.onclick === 'function') btn.onclick.call(btn, e);
-    }, { passive: false });
-    btn.addEventListener('click', function(e) {
-      if (Date.now() - lastAction < 350) { e.preventDefault(); e.stopPropagation(); }
-    });
-  });
-})();
-
-// Android Back button (если установлен @capacitor/app)
 function setupAndroidBackButton() {
   if (!(window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App)) return;
   try {
     window.Capacitor.Plugins.App.addListener('backButton', () => {
-      // 1. Модалки — закрываем в порядке приоритета
       if ($('viewerModal').classList.contains('on')) { $('viewerClose').click(); return; }
       if ($('modalSettings').classList.contains('on')) { $('modalSettings').classList.remove('on'); return; }
       if ($('modalInfo').classList.contains('on')) { $('modalInfo').classList.remove('on'); return; }
@@ -4122,9 +3872,7 @@ function setupAndroidBackButton() {
       if ($('modalDuplicates').classList.contains('on')) { $('modalDuplicates').classList.remove('on'); return; }
       if ($('modalCompressResult').classList.contains('on')) { $('modalCompressResult').classList.remove('on'); return; }
       if (ckTarget) { ckHide(true); return; }
-      // 2. Выделение — снимаем
       if (sel.size + folderSel.size > 0) { clearSel(); return; }
-      // 3. Корзина — возвращаемся на файлы
       if (viewMode === 'trash') {
         document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
         const filesTab = document.querySelector('.tab[data-view="files"]');
@@ -4132,13 +3880,11 @@ function setupAndroidBackButton() {
         viewMode = 'files'; document.body.dataset.view = 'files'; filterType = 'all';
         refresh(); return;
       }
-      // 4. Внутри папки — на уровень вверх
       if (currentFolder !== null) {
         const cur = allActiveFoldersCache.find(f => f.id === currentFolder);
         currentFolder = cur ? cur.parentId : null;
         clearSel(); refresh(); return;
       }
-      // 5. В корне — выходим из приложения
       try { window.Capacitor.Plugins.App.exitApp(); } catch(_) {}
     });
   } catch(e) { console.warn('Back button setup failed', e); }
