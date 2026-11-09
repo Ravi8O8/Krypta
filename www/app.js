@@ -1019,29 +1019,21 @@ async function loadFolderPreview(folderId, tileEl) {
     const tx = db.transaction(SF, 'readonly');
     const index = tx.objectStore(SF).index('folder');
     const files = await p(index.getAll(folderId));
-    const valid = files.filter(f => !f.deleted && (f.type === 'image' || f.type === 'video')).slice(0, 4);
+    const valid = files.filter(f => !f.deleted && (f.type === 'image' || f.type === 'video')).slice(0, 1);
     if (valid.length === 0) return;
     const previewEl = tileEl.querySelector('.folder-preview');
     if (!previewEl) return;
-    const thumbs = await Promise.all(valid.map(f => getThumb(f)));
-    let loaded = 0;
-    for (let i = 0; i < valid.length; i++) {
-      const thumb = thumbs[i];
-      if (thumb) {
-        const url = URL.createObjectURL(thumb);
-        const item = document.createElement('div');
-        item.className = 'fp-item';
-        item.innerHTML = `<img src="${url}" loading="lazy">`;
-        previewEl.appendChild(item);
-        loaded++;
-        if (!tileEl._previewUrls) tileEl._previewUrls = [];
-        tileEl._previewUrls.push(url);
-      }
-    }
-    if (loaded > 0) {
-      tileEl.classList.remove('no-preview');
-      tileEl.classList.add('has-preview');
-    }
+    const thumb = await getThumb(valid[0]);
+    if (!thumb) return;
+    const url = URL.createObjectURL(thumb);
+    const item = document.createElement('div');
+    item.className = 'fp-item';
+    item.innerHTML = `<img src="${url}" loading="lazy">`;
+    previewEl.appendChild(item);
+    if (!tileEl._previewUrls) tileEl._previewUrls = [];
+    tileEl._previewUrls.push(url);
+    tileEl.classList.remove('no-preview');
+    tileEl.classList.add('has-preview');
   } catch(e) { console.warn('Folder preview error', e); }
 }
 
@@ -1248,7 +1240,7 @@ function detectType(file) {
   if(mime.startsWith('video/') || /^(mp4|webm|mov|avi|mkv|m4v|3gp|flv|wmv)$/.test(ext)) return 'video';
   return 'other';
 }
-const TYPE_LABEL = {image:'Фото', video:'Видео', other:'Файл'};
+const TYPE_LABEL = {image:'Фото', video:'Видео'};
 
 async function moveToTrash(fileIds, folderIds) {
   const now = Date.now();
@@ -2257,7 +2249,7 @@ function renderGrid(reset = true) {
     }
     const tagsHtml = f.tags && f.tags.length ? `<div class="tile-tags">${f.tags.slice(0,2).map(t=>`<span>#${escapeHtml(t)}</span>`).join('')}${f.tags.length>2 ? '<span>+</span>' : ''}</div>` : '';
     const favStar = f.fav ? `<div class="fav-star">${ICONS.star}</div>` : '';
-    el.innerHTML = `${favStar}${inner}${tagsHtml}${f.deleted?'<div class="badge trash">Удалено</div>':`<div class="badge">${TYPE_LABEL[f.type]}</div>`}<div class="chk"></div>`;
+    el.innerHTML = `${favStar}${inner}${tagsHtml}${f.deleted?'<div class="badge trash">Удалено</div>':`<div class="badge">${TYPE_LABEL[f.type] || 'Файл'}</div>`}<div class="chk"></div>`;
     frag.appendChild(el);
     if (isImage || isVideo) imageLoader.observe(el);
   }
@@ -2507,10 +2499,6 @@ $('file').onchange = async e => {
     }
 
     await refresh();
-    const allNow = await getAllFiles();
-    allNow.filter(f => !f.deleted).forEach(f => {
-      if (f.type === 'image' || f.type === 'video') queueBgThumb(f);
-    });
     if (addedImageIds.length > 0) {
       setTimeout(async () => {
         if (await showConfirm('Сжать фото?', `Вы добавили <b>${addedImageIds.length}</b> фото. Хотите их сжать для экономии места?`, 'Сжать', 'Пропустить')) {
@@ -3058,7 +3046,7 @@ async function loadTheme() {
   $('changePassWrap').style.display = $('swLock').classList.contains('on') ? 'block' : 'none';
   const trashDays = s.trashAutoDays ?? DEFAULT_TRASH_DAYS;
   updateTrashAutoPillsUI(trashDays);
-  soundEnabled = s.soundEnabled !== false;
+  soundEnabled = s.soundEnabled === true;
   if ($('swSound')) $('swSound').classList.toggle('on', soundEnabled);
   folderPreviewEnabled = s.folderPreviewEnabled !== false;
   if ($('swFolderPreview')) $('swFolderPreview').classList.toggle('on', folderPreviewEnabled);
