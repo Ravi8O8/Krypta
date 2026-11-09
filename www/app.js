@@ -3176,7 +3176,22 @@ window.importFromArchive = async (input) => {
     const existingHashes = new Set(existingFiles.filter(f => !f.deleted).map(f => f.hash).filter(h => h && !h.startsWith('unique_')));
 
     let imported = 0, skipped = 0, failed = 0;
-    const BATCH = 10;
+    const pendingRecords = [];
+    const FLUSH_SIZE = 100;
+    let lastYield = Date.now();
+
+    const flushBatch = async () => {
+      if (pendingRecords.length === 0) return;
+      const batch = pendingRecords.splice(0);
+      await new Promise((res, rej) => {
+        const tx = db.transaction(SF, 'readwrite');
+        const store = tx.objectStore(SF);
+        for (const r of batch) store.add(r);
+        tx.oncomplete = () => res();
+        tx.onerror = () => rej(tx.error);
+        tx.onabort = () => rej(tx.error || new Error('abort'));
+      });
+    };
 
     for (let i = 0; i < mediaEntries.length; i++) {
       const entry = mediaEntries[i];
@@ -3209,23 +3224,17 @@ window.importFromArchive = async (input) => {
             const ok = await writeDataToOPFS(fileId, entry.data);
             if (!ok) { failed++; }
             else {
-              if (type === 'image' || type === 'video') {
-                try {
-                  const thumbBlob = type === 'image'
-                    ? await generateImageThumbnail(fileObj)
-                    : await generateVideoThumbnail(fileObj);
-                  if (thumbBlob) await saveThumb(fileId, thumbBlob);
-                } catch(e) {}
-              }
-              await p(st(SF, 'readwrite').add(record));
+              pendingRecords.push(record);
               if (hash && !hash.startsWith('unique_')) existingHashes.add(hash);
               imported++;
+              if (pendingRecords.length >= FLUSH_SIZE) await flushBatch();
             }
           } else {
             record.blob = fileObj;
-            await p(st(SF, 'readwrite').add(record));
+            pendingRecords.push(record);
             if (hash && !hash.startsWith('unique_')) existingHashes.add(hash);
             imported++;
+            if (pendingRecords.length >= FLUSH_SIZE) await flushBatch();
           }
         }
       } catch (err) {
@@ -3233,14 +3242,16 @@ window.importFromArchive = async (input) => {
         failed++;
       }
 
-      // Обновляем UI и отпускаем event loop раз в 10 файлов
-      if ((i + 1) % BATCH === 0 || i === mediaEntries.length - 1) {
+      const now = Date.now();
+      if (now - lastYield > 150 || i === mediaEntries.length - 1) {
+        lastYield = now;
         showProgress('Импорт', 5 + Math.round(((i + 1) / mediaEntries.length) * 90),
           `${i + 1}/${mediaEntries.length}: ${fileName}`,
           `✓${imported} · ⏭${skipped} · ✗${failed}`);
         await nextMacrotask();
       }
     }
+    await flushBatch();
 
     const elapsed = (performance.now() - t0) / 1000;
     const totalMB = mediaEntries.reduce((s, e) => s + e.data.length, 0) / 1048576;
