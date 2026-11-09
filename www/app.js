@@ -976,16 +976,17 @@ async function extractEntryToNative(zipInfo, entry, fileId) {
   
   const CHUNK = 1024 * 1024; 
   let isFirst = true;
-  let lastYield = Date.now();
 
-  const writeChunk = async (blob) => {
+  const writeChunk = async (uint8array) => {
+    const base64 = await blobToBase64(new Blob([uint8array]));
     if (isFirst) {
-      await Filesystem.writeFile({ path, data: blob, directory: 'DOCUMENTS', recursive: true });
+      await Filesystem.writeFile({ path, data: base64, directory: 'DOCUMENTS', recursive: true });
       isFirst = false;
     } else {
-      await Filesystem.appendFile({ path, data: blob, directory: 'DOCUMENTS' });
+      await Filesystem.appendFile({ path, data: base64, directory: 'DOCUMENTS' });
     }
-    await new Promise(r => setTimeout(r, 0)); 
+    // Даем UI потоку отдохнуть, чтобы Android не выдавал ошибку "Приложение не отвечает"
+    await new Promise(r => setTimeout(r, 10));
   };
 
   try {
@@ -993,10 +994,10 @@ async function extractEntryToNative(zipInfo, entry, fileId) {
       let off = 0;
       while (off < entry.compSize) {
         const end = Math.min(off + CHUNK, entry.compSize);
-        const blobChunk = zipInfo.file.slice(dataStart + off, dataStart + end);
-        await writeChunk(blobChunk);
+        const buf = new Uint8Array(await zipInfo.file.slice(dataStart + off, dataStart + end).arrayBuffer());
+        await writeChunk(buf);
         off = end;
-        if (Date.now() - lastYield > 100) { await nextMacrotask(); lastYield = Date.now(); }
+        await nextMacrotask();
       }
     } else if (entry.method === 8) {
       const ds = new DecompressionStream('deflate-raw');
@@ -1010,7 +1011,7 @@ async function extractEntryToNative(zipInfo, entry, fileId) {
           const buf = new Uint8Array(await zipInfo.file.slice(offset, chunkEnd).arrayBuffer());
           await dsWriter.write(buf);
           offset = chunkEnd;
-          if (Date.now() - lastYield > 100) { await nextMacrotask(); lastYield = Date.now(); }
+          await nextMacrotask();
         }
         await dsWriter.close();
       })();
@@ -1021,7 +1022,7 @@ async function extractEntryToNative(zipInfo, entry, fileId) {
         const merged = new Uint8Array(partsSize);
         let o = 0;
         for (const c of parts) { merged.set(c, o); o += c.length; }
-        await writeChunk(new Blob([merged]));
+        await writeChunk(merged);
         parts = []; partsSize = 0;
       };
       
@@ -1032,7 +1033,7 @@ async function extractEntryToNative(zipInfo, entry, fileId) {
           parts.push(value); partsSize += value.length;
           if (partsSize >= CHUNK) {
             await flushParts();
-            if (Date.now() - lastYield > 100) { await nextMacrotask(); lastYield = Date.now(); }
+            await nextMacrotask();
           }
         }
         await flushParts();
@@ -1472,12 +1473,20 @@ async function getFromOPFS(fileId) {
   if (nativeStorage) {
     const { Filesystem } = window.Capacitor.Plugins;
     try {
-      const uri = await Filesystem.getUri({
-        path: 'Krypta/files/' + fileId,
-        directory: 'DOCUMENTS'
-      });
-      const res = await fetch(Capacitor.convertFileSrc(uri.uri));
-      return await res.blob();
+      const uri = await Filesystem.getUri({ path: 'Krypta/files/' + fileId, directory: 'DOCUMENTS' });
+      try {
+        const res = await fetch(Capacitor.convertFileSrc(uri.uri));
+        if (res.ok) {
+          const blob = await res.blob();
+          if (blob.size > 0) return blob;
+        }
+      } catch(e) {}
+      
+      const result = await Filesystem.readFile({ path: 'Krypta/files/' + fileId, directory: 'DOCUMENTS' });
+      const binary = atob(result.data);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      return new Blob([bytes]);
     } catch(e) { return null; }
   }
   if (!rootDir) return null;
@@ -1561,7 +1570,7 @@ async function saveToOPFSChunked(fileId, file) {
             `${(offset/1048576).toFixed(1)} / ${(total/1048576).toFixed(1)} МБ`);
           await nextMacrotask();
         }
-        await new Promise(r => setTimeout(r, 0));
+        await new Promise(r => setTimeout(r, 10)); // Отдых для UI
       }
       return true;
     } catch(e) { console.error('Native save error', e); return false; }
@@ -1694,6 +1703,7 @@ function addFolder(name, parent, color) {
   }));
 }
 function detectType(file) {
+  if (!file) return 'other';
   const mime = (file.type||'').toLowerCase(), name = (file.name||'').toLowerCase();
   const ext = (name.match(/\.([a-z0-9]+)$/)||[])[1]||'';
   if(mime.startsWith('image/') || /^(jpg|jpeg|png|gif|webp|bmp|heic|heif|avif|svg)$/.test(ext)) return 'image';
@@ -2231,7 +2241,7 @@ async function writeBlobToCacheChunked(blob, cachePath, onProgress) {
     }
     offset = end;
     if (onProgress) onProgress(offset / total);
-    await new Promise(r => setTimeout(r, 0));
+    await new Promise(r => setTimeout(r, 10));
   }
 }
 
@@ -2433,6 +2443,15 @@ async function renderViewer() {
   container.className = 'swipe-container'; container.id = 'swipe';
   if(f.type === 'image') {
     const img = document.createElement('img'); img.src = url; container.appendChild(img);
+    img.onerror = async () => {
+      const fileBlob = await getFileData(f);
+      if (fileBlob) {
+        const blobUrl = URL.createObjectURL(fileBlob);
+        img.src = blobUrl;
+        modal.dataset.url = blobUrl;
+        modal.dataset.isBlob = '1';
+      }
+    };
     if (slideshowActive) scheduleSlideshowNext(f);
   } else {
     const video = document.createElement('video');
@@ -3879,6 +3898,8 @@ window.importFromArchive = async (input) => {
           await new Promise((res, rej) => { t6.oncomplete = res; t6.onerror = e => rej(e.target.error); });
         }
 
+        // ВАЖНО: Принудительно ставим флаг, чтобы приложение не запустило миграцию после импорта
+        await setSetting('opfsMigratedToNative', true);
         settingsCache = null;
         hideProgress();
         toast('Готово', `Восстановлено ${totalFiles} файлов. Перезагрузка...`);
@@ -3986,7 +4007,7 @@ window.importFromArchive = async (input) => {
             skipped++;
           } else {
             const fileObj = await getFromOPFS(fileId);
-            const type = detectType(fileObj);
+            const type = fileObj ? detectType(fileObj) : (ARCHIVE_MIME_MAP[ext]?.split('/')[0] === 'image' ? 'image' : 'video');
             const exifDate = (type === 'image' && fileObj) ? await extractExifDate(fileObj) : null;
             const record = {
               fileId, name: fileName, type, mime,
@@ -4126,6 +4147,7 @@ window.importFromArchive = async (input) => {
         await new Promise((res, rej) => { t6.oncomplete = res; t6.onerror = e => rej(e.target.error); });
       }
 
+      await setSetting('opfsMigratedToNative', true);
       settingsCache = null;
       hideProgress();
       toast('Готово', `Восстановлено ${totalFiles} файлов. Перезагрузка...`);
