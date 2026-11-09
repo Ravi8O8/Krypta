@@ -83,6 +83,129 @@ let currentOperation = null;
 let lastProgressUpdate = 0;
 let _keepAliveTimer = null;
 
+// ============================================================
+// UNIFIED STORAGE LAYER: OPFS (web) / @capacitor/filesystem (native)
+// ============================================================
+let nativeStorage = false;
+
+function isNativeStorage() {
+  return !!(window.Capacitor
+    && typeof window.Capacitor.isNativePlatform === 'function'
+    && window.Capacitor.isNativePlatform());
+}
+
+async function initStorage() {
+  if (isNativeStorage()) {
+    nativeStorage = true;
+    const { Filesystem } = window.Capacitor.Plugins;
+    try { await Filesystem.mkdir({ path: 'Krypta/files', directory: 'DOCUMENTS', recursive: true }); } catch(e) {}
+    try { await Filesystem.mkdir({ path: 'Krypta/thumbs', directory: 'DOCUMENTS', recursive: true }); } catch(e) {}
+  }
+  // rootDir нужен и на native — для миграции старых файлов из OPFS
+  if (navigator.storage && navigator.storage.getDirectory) {
+    try {
+      rootDir = await navigator.storage.getDirectory();
+      if (!nativeStorage && navigator.storage.persist) await navigator.storage.persist();
+    } catch(e) { rootDir = null; }
+  }
+}
+
+async function migrateOPFSToNative() {
+  if (!nativeStorage || !rootDir) return;
+  const s = await getAllSettings();
+  if (s.opfsMigratedToNative) return;
+
+  const { Filesystem } = window.Capacitor.Plugins;
+  const files = await getAllFiles();
+  if (!files.length) { await setSetting('opfsMigratedToNative', true); return; }
+
+  showProgress('Миграция хранилища', 0, 'Подготовка...', '', true);
+  await nextMacrotask();
+
+  let migrated = 0, skipped = 0, failed = 0;
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i];
+    try {
+      let opfsFile = null;
+      try {
+        const fh = await rootDir.getFileHandle(f.fileId);
+        opfsFile = await fh.getFile();
+      } catch(e) {}
+
+      if (opfsFile && opfsFile.size > 0) {
+        const base64 = await blobToBase64(opfsFile);
+        await Filesystem.writeFile({
+          path: 'Krypta/files/' + f.fileId,
+          data: base64,
+          directory: 'DOCUMENTS',
+          recursive: true
+        });
+        try { await rootDir.removeEntry(f.fileId); } catch(e) {}
+        migrated++;
+      } else {
+        skipped++;
+      }
+
+      try {
+        const th = await rootDir.getFileHandle(THUMB_PREFIX + f.fileId);
+        const thFile = await th.getFile();
+        if (thFile) {
+          const th64 = await blobToBase64(thFile);
+          await Filesystem.writeFile({
+            path: 'Krypta/thumbs/' + f.fileId,
+            data: th64,
+            directory: 'DOCUMENTS',
+            recursive: true
+          });
+          try { await rootDir.removeEntry(THUMB_PREFIX + f.fileId); } catch(e) {}
+        }
+      } catch(e) {}
+
+      if (f.blob) {
+        try {
+          const stg = st(SF, 'readwrite');
+          const v = await p(stg.get(f.id));
+          if (v && v.blob) { delete v.blob; await p(stg.put(v)); }
+        } catch(e) {}
+      }
+    } catch(err) {
+      console.warn('Migration failed', f.name, err);
+      failed++;
+    }
+    showProgress(
+      'Миграция хранилища',
+      Math.round(((i + 1) / files.length) * 100),
+      f.name || `Файл ${i+1}`,
+      `✓${migrated} · ⏭${skipped} · ✗${failed}`
+    );
+    if (i % 5 === 0) await nextMacrotask();
+  }
+
+  try {
+    const bgFh = await rootDir.getFileHandle(BG_FILE_ID);
+    const bg = await bgFh.getFile();
+    if (bg) {
+      const bg64 = await blobToBase64(bg);
+      await Filesystem.writeFile({
+        path: 'Krypta/files/custom-bg',
+        data: bg64,
+        directory: 'DOCUMENTS',
+        recursive: true
+      });
+      try { await rootDir.removeEntry(BG_FILE_ID); } catch(e) {}
+    }
+  } catch(e) {}
+
+  await setSetting('opfsMigratedToNative', true);
+  hideProgress();
+  toast('Миграция завершена', `Перенесено: ${migrated}, пропущено: ${skipped}`, failed > 0);
+  await refresh();
+}
+
+// ============================================================
+// End storage layer
+// ============================================================
+
 function initAudio() {
   if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   if (audioCtx.state === 'suspended') audioCtx.resume();
@@ -337,6 +460,8 @@ async function checkFreeSpace(requiredBytes, label) {
     const usage = est.usage || 0;
     if (quota <= 0) return true;
     const free = quota - usage;
+    // На native файлы лежат в Documents, квота WebView не показательна — пропускаем
+    if (nativeStorage) return true;
     if (free < requiredBytes * 1.15) {
       const freeMB = (free / 1048576).toFixed(0);
       const needMB = (requiredBytes * 1.15 / 1048576).toFixed(0);
@@ -396,7 +521,6 @@ function showConfirm(title, text, okText = 'ОК', cancelText = 'Отмена') 
     modal.classList.add('on');
   });
 }
-
 const CRC_TABLE = (() => {
   const t = new Uint32Array(256);
   for (let i = 0; i < 256; i++) { let c=i; for (let k=0;k<8;k++) c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1); t[i]=c>>>0; }
@@ -768,7 +892,10 @@ async function parseZipStreaming(file) {
   return { file, entries };
 }
 
+// extractEntryToOPFS с нативной веткой
 async function extractEntryToOPFS(zipInfo, entry, fileId) {
+  if (nativeStorage) return extractEntryToNative(zipInfo, entry, fileId);
+
   const lhBuf = new Uint8Array(await zipInfo.file.slice(entry.localOffset, entry.localOffset + 30).arrayBuffer());
   const lhDV = new DataView(lhBuf.buffer);
   const dataStart = entry.localOffset + 30 + lhDV.getUint16(26, true) + lhDV.getUint16(28, true);
@@ -838,6 +965,88 @@ async function extractEntryToOPFS(zipInfo, entry, fileId) {
   } catch (e) {
     try { await writable.abort(); } catch(_) {}
     try { await rootDir.removeEntry(fileId); } catch(_) {}
+    throw e;
+  }
+}
+
+// Нативный аналог для Capacitor
+async function extractEntryToNative(zipInfo, entry, fileId) {
+  const { Filesystem } = window.Capacitor.Plugins;
+  const path = 'Krypta/files/' + fileId;
+  const lhBuf = new Uint8Array(await zipInfo.file.slice(entry.localOffset, entry.localOffset + 30).arrayBuffer());
+  const lhDV = new DataView(lhBuf.buffer);
+  const dataStart = entry.localOffset + 30 + lhDV.getUint16(26, true) + lhDV.getUint16(28, true);
+  const CHUNK = 4 * 1024 * 1024;
+  let isFirst = true;
+  let lastYield = Date.now();
+
+  const writeChunk = async (bytes) => {
+    const base64 = await blobToBase64(new Blob([bytes]));
+    if (isFirst) {
+      await Filesystem.writeFile({ path, data: base64, directory: 'DOCUMENTS', recursive: true });
+      isFirst = false;
+    } else {
+      await Filesystem.appendFile({ path, data: base64, directory: 'DOCUMENTS' });
+    }
+  };
+
+  try {
+    if (entry.method === 0) {
+      let off = 0;
+      while (off < entry.compSize) {
+        const end = Math.min(off + CHUNK, entry.compSize);
+        const buf = new Uint8Array(await zipInfo.file.slice(dataStart + off, dataStart + end).arrayBuffer());
+        await writeChunk(buf);
+        off = end;
+        if (Date.now() - lastYield > 150) { await nextMacrotask(); lastYield = Date.now(); }
+      }
+    } else if (entry.method === 8) {
+      const ds = new DecompressionStream('deflate-raw');
+      const dsWriter = ds.writable.getWriter();
+      const dsReader = ds.readable.getReader();
+      const writePromise = (async () => {
+        const end = dataStart + entry.compSize;
+        let offset = dataStart;
+        while (offset < end) {
+          const chunkEnd = Math.min(offset + CHUNK, end);
+          const buf = new Uint8Array(await zipInfo.file.slice(offset, chunkEnd).arrayBuffer());
+          await dsWriter.write(buf);
+          offset = chunkEnd;
+          if (Date.now() - lastYield > 150) { await nextMacrotask(); lastYield = Date.now(); }
+        }
+        await dsWriter.close();
+      })();
+      let parts = [], partsSize = 0;
+      const flushParts = async () => {
+        if (!partsSize) return;
+        const merged = new Uint8Array(partsSize);
+        let o = 0;
+        for (const c of parts) { merged.set(c, o); o += c.length; }
+        await writeChunk(merged);
+        parts = []; partsSize = 0;
+      };
+      try {
+        while (true) {
+          const { done, value } = await dsReader.read();
+          if (done) break;
+          parts.push(value); partsSize += value.length;
+          if (partsSize >= CHUNK) {
+            await flushParts();
+            if (Date.now() - lastYield > 150) { await nextMacrotask(); lastYield = Date.now(); }
+          }
+        }
+        await flushParts();
+        await writePromise;
+      } catch(e) {
+        try { await dsWriter.abort(); } catch(_) {}
+        throw e;
+      }
+    } else {
+      throw new Error('Неизвестный метод сжатия ' + entry.method);
+    }
+    return true;
+  } catch(e) {
+    try { await Filesystem.deleteFile({ path, directory: 'DOCUMENTS' }); } catch(_) {}
     throw e;
   }
 }
@@ -1016,21 +1225,60 @@ async function generateVideoThumbnail(file, maxSize = 300) {
   });
 }
 
+// ===== Миниатюры: нативные версии =====
 async function saveThumb(fileId, blob) {
-  if (!rootDir || !blob) return;
+  if (!blob) return;
+  if (nativeStorage) {
+    const { Filesystem } = window.Capacitor.Plugins;
+    try {
+      const base64 = await blobToBase64(blob);
+      await Filesystem.writeFile({
+        path: 'Krypta/thumbs/' + fileId,
+        data: base64,
+        directory: 'DOCUMENTS',
+        recursive: true
+      });
+    } catch(e) {}
+    return;
+  }
+  if (!rootDir) return;
   try {
     const fh = await rootDir.getFileHandle(THUMB_PREFIX + fileId, { create: true });
     const wr = await fh.createWritable(); await wr.write(blob); await wr.close();
   } catch(e) {}
 }
 async function getThumb(f) {
+  if (nativeStorage) {
+    const { Filesystem } = window.Capacitor.Plugins;
+    try {
+      const result = await Filesystem.readFile({
+        path: 'Krypta/thumbs/' + f.fileId,
+        directory: 'DOCUMENTS'
+      });
+      const binary = atob(result.data);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      return new Blob([bytes], { type: 'image/jpeg' });
+    } catch(e) { return null; }
+  }
   if (!rootDir) return null;
   try { const fh = await rootDir.getFileHandle(THUMB_PREFIX + f.fileId); return await fh.getFile(); } catch(e) { return null; }
 }
 async function deleteThumb(fileId) {
+  if (nativeStorage) {
+    const { Filesystem } = window.Capacitor.Plugins;
+    try {
+      await Filesystem.deleteFile({
+        path: 'Krypta/thumbs/' + fileId,
+        directory: 'DOCUMENTS'
+      });
+    } catch(e) {}
+    return;
+  }
   if (!rootDir) return;
   try { await rootDir.removeEntry(THUMB_PREFIX + fileId); } catch(e) {}
 }
+
 function queueBgThumb(f) {
   if (bgThumbQueue.find(x => x.id === f.id)) return;
   bgThumbQueue.push(f);
@@ -1133,6 +1381,12 @@ async function updateBgPreview(bgFile = undefined) {
 $('bgPickerBtn').onclick = () => { $('bgFileInput').value = ''; $('bgFileInput').click(); };
 $('bgRemoveBtn').onclick = async () => {
   if (!await showConfirm('Фон', 'Убрать фоновое изображение?')) return;
+  if (nativeStorage) {
+    const { Filesystem } = window.Capacitor.Plugins;
+    try { await Filesystem.deleteFile({ path: 'Krypta/files/custom-bg', directory: 'DOCUMENTS' }); } catch(e) {}
+  } else if (rootDir) {
+    try { await rootDir.removeEntry(BG_FILE_ID); } catch(e) {}
+  }
   await setSetting('bgEnabled', false);
   await applyBackground();
   await updateBgPreview();
@@ -1154,10 +1408,21 @@ $('bgFileInput').onchange = async e => {
     const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.85));
     URL.revokeObjectURL(url0);
     if (!blob) throw new Error('Ошибка сжатия');
-    if (!rootDir) throw new Error('Хранилище недоступно');
     showProgress('Фон', 75, 'Сохранение...', '...');
-    const fh = await rootDir.getFileHandle(BG_FILE_ID, { create: true });
-    const wr = await fh.createWritable(); await wr.write(blob); await wr.close();
+    if (nativeStorage) {
+      const { Filesystem } = window.Capacitor.Plugins;
+      const base64 = await blobToBase64(blob);
+      await Filesystem.writeFile({
+        path: 'Krypta/files/custom-bg',
+        data: base64,
+        directory: 'DOCUMENTS',
+        recursive: true
+      });
+    } else {
+      if (!rootDir) throw new Error('Хранилище недоступно');
+      const fh = await rootDir.getFileHandle(BG_FILE_ID, { create: true });
+      const wr = await fh.createWritable(); await wr.write(blob); await wr.close();
+    }
     await setSetting('bgEnabled', true);
     const bgFile = await getFromOPFS(BG_FILE_ID);
     await applyBackground(bgFile); await updateBgPreview(bgFile);
@@ -1204,22 +1469,37 @@ document.querySelectorAll('#trashAutoPills .pill').forEach(p => {
   p.onclick = () => setTrashAutoDays(Number(p.dataset.val));
 });
 
-async function initOPFS() {
-  if (navigator.storage && navigator.storage.getDirectory) {
-    try {
-      rootDir = await navigator.storage.getDirectory();
-      if (navigator.storage.persist) await navigator.storage.persist();
-    } catch(e) { rootDir = null; }
-  }
-}
+// getFromOPFS / deleteFromOPFS — нативные версии
 async function getFromOPFS(fileId) {
+  if (nativeStorage) {
+    const { Filesystem } = window.Capacitor.Plugins;
+    try {
+      const uri = await Filesystem.getUri({
+        path: 'Krypta/files/' + fileId,
+        directory: 'DOCUMENTS'
+      });
+      const res = await fetch(Capacitor.convertFileSrc(uri.uri));
+      return await res.blob();
+    } catch(e) { return null; }
+  }
   if (!rootDir) return null;
   try { const fh = await rootDir.getFileHandle(fileId); return await fh.getFile(); } catch(e) { return null; }
 }
 async function deleteFromOPFS(fileId) {
+  if (nativeStorage) {
+    const { Filesystem } = window.Capacitor.Plugins;
+    try {
+      await Filesystem.deleteFile({
+        path: 'Krypta/files/' + fileId,
+        directory: 'DOCUMENTS'
+      });
+    } catch(e) {}
+    return;
+  }
   if (!rootDir) return;
   try { await rootDir.removeEntry(fileId); } catch(e) {}
 }
+
 function generateId() { return Date.now().toString(36) + Math.random().toString(36).substring(2, 10); }
 
 async function calculateHash(file) {
@@ -1254,7 +1534,40 @@ async function calculateHash(file) {
   }
 }
 
+// saveToOPFSChunked — нативная версия + OPFS fallback
 async function saveToOPFSChunked(fileId, file) {
+  if (nativeStorage) {
+    const { Filesystem } = window.Capacitor.Plugins;
+    const path = 'Krypta/files/' + fileId;
+    try { await Filesystem.deleteFile({ path, directory: 'DOCUMENTS' }); } catch(e) {}
+    try {
+      const CHUNK = 4 * 1024 * 1024;
+      const total = file.size;
+      let offset = 0;
+      let isFirst = true;
+      let lastYield = 0;
+      while (offset < total) {
+        if (isAppInBackground) { await new Promise(r => setTimeout(r, 1000)); continue; }
+        const end = Math.min(offset + CHUNK, total);
+        const base64 = await blobToBase64(file.slice(offset, end));
+        if (isFirst) {
+          await Filesystem.writeFile({ path, data: base64, directory: 'DOCUMENTS', recursive: true });
+          isFirst = false;
+        } else {
+          await Filesystem.appendFile({ path, data: base64, directory: 'DOCUMENTS' });
+        }
+        offset = end;
+        const now = Date.now();
+        if (now - lastYield > 150 || offset === total) {
+          lastYield = now;
+          showProgress('Сохранение', Math.round((offset / total) * 100), file.name,
+            `${(offset/1048576).toFixed(1)} / ${(total/1048576).toFixed(1)} МБ`);
+          await nextMacrotask();
+        }
+      }
+      return true;
+    } catch(e) { console.error('Native save error', e); return false; }
+  }
   if (!rootDir) return false;
   try {
     const fileHandle = await rootDir.getFileHandle(fileId, { create: true });
@@ -1273,7 +1586,8 @@ async function saveToOPFSChunked(fileId, file) {
         const now = Date.now();
         if (now - lastYield > 150 || bytesWritten === file.size) {
           lastYield = now;
-          showProgress('Сохранение', Math.round((bytesWritten / file.size) * 100), file.name, `${(bytesWritten/1048576).toFixed(1)} / ${(file.size/1048576).toFixed(1)} МБ`);
+          showProgress('Сохранение', Math.round((bytesWritten / file.size) * 100), file.name,
+            `${(bytesWritten/1048576).toFixed(1)} / ${(file.size/1048576).toFixed(1)} МБ`);
           await nextMacrotask();
         }
       }
@@ -1284,6 +1598,19 @@ async function saveToOPFSChunked(fileId, file) {
 }
 
 async function writeDataToOPFS(fileId, data) {
+  if (nativeStorage) {
+    const { Filesystem } = window.Capacitor.Plugins;
+    try {
+      const base64 = await blobToBase64(new Blob([data]));
+      await Filesystem.writeFile({
+        path: 'Krypta/files/' + fileId,
+        data: base64,
+        directory: 'DOCUMENTS',
+        recursive: true
+      });
+      return true;
+    } catch(e) { console.error('writeDataToNative error', e); return false; }
+  }
   if (!rootDir) return false;
   try {
     const fh = await rootDir.getFileHandle(fileId, { create: true });
@@ -1339,7 +1666,7 @@ async function addFile(file, hash) {
     deleted: false, deletedAt: null, fav: false,
     tags: []
   };
-  if (!rootDir) {
+  if (!nativeStorage && !rootDir) {
     record.blob = file;
     return p(st(SF, 'readwrite').add(record));
   }
@@ -1357,7 +1684,7 @@ async function addFile(file, hash) {
 }
 async function getFileData(f) {
   let raw = null;
-  if (rootDir) raw = await getFromOPFS(f.fileId);
+  if (nativeStorage || rootDir) raw = await getFromOPFS(f.fileId);
   if (!raw) raw = f.blob;
   return raw;
 }
@@ -1376,6 +1703,7 @@ function detectType(file) {
   return 'other';
 }
 const TYPE_LABEL = {image:'Фото', video:'Видео', other:'Файл'};
+
 async function moveToTrash(fileIds, folderIds) {
   const now = Date.now();
   const allFolders = await getAllFolders();
@@ -1467,7 +1795,11 @@ async function deletePermanent(fileIds, folderIds) {
   $('grid').querySelectorAll('.tile').forEach(el => {
     if (el._blobUrl) { try { URL.revokeObjectURL(el._blobUrl); } catch(e) {} el._blobUrl = null; }
   });
-  if ($('viewerModal').dataset.url) { URL.revokeObjectURL($('viewerModal').dataset.url); delete $('viewerModal').dataset.url; }
+  if ($('viewerModal').dataset.url && $('viewerModal').dataset.isBlob === '1') {
+    try { URL.revokeObjectURL($('viewerModal').dataset.url); } catch(e) {}
+  }
+  delete $('viewerModal').dataset.url;
+  delete $('viewerModal').dataset.isBlob;
 
   const allFiles = await getAllFiles();
   const allFolders = await getAllFolders();
@@ -1618,6 +1950,7 @@ window.openDupGallery = async (fileIds, clickedId) => {
   renderViewer();
 };
 
+// compactDB с нативной очисткой
 async function compactDB() {
   if (!await showConfirm('Сжатие базы', 'Очистить корзину, удалить "осиротевшие" файлы и пересобрать базу?')) return;
   await acquireWakeLock();
@@ -1667,9 +2000,32 @@ async function compactDB() {
       await new Promise((res, rej) => { tOr.oncomplete = res; tOr.onerror = e => rej(e.target.error); });
       files = files.filter(f => f.folderId == null || validFolderIds.has(f.folderId));
     }
-    if (rootDir) {
+
+    const validFileIds = new Set(files.map(f => f.fileId));
+
+    // Native cleanup
+    if (nativeStorage) {
       showProgress('Очистка', 40, 'Удаление лишних файлов...', '');
-      const validFileIds = new Set(files.map(f => f.fileId));
+      const { Filesystem } = window.Capacitor.Plugins;
+      try {
+        const res = await Filesystem.readdir({ path: 'Krypta/files', directory: 'DOCUMENTS' });
+        for (const f of res.files) {
+          if (f.name === BG_FILE_ID) continue;
+          if (!validFileIds.has(f.name)) {
+            try { await Filesystem.deleteFile({ path: 'Krypta/files/' + f.name, directory: 'DOCUMENTS' }); } catch(e) {}
+          }
+        }
+        const resT = await Filesystem.readdir({ path: 'Krypta/thumbs', directory: 'DOCUMENTS' });
+        for (const f of resT.files) {
+          if (!validFileIds.has(f.name)) {
+            try { await Filesystem.deleteFile({ path: 'Krypta/thumbs/' + f.name, directory: 'DOCUMENTS' }); } catch(e) {}
+          }
+        }
+      } catch(e) { console.warn('Native cleanup err', e); }
+    }
+
+    // OPFS legacy cleanup
+    if (rootDir) {
       try {
         const toRemove = [];
         for await (const name of rootDir.keys()) {
@@ -1684,6 +2040,7 @@ async function compactDB() {
         for (const name of toRemove) { try { await rootDir.removeEntry(name); } catch(e) {} }
       } catch(e) { console.warn('OPFS cleanup err', e); }
     }
+
     showProgress('Очистка', 60, 'Пересборка IndexedDB...', '');
     db.close();
     await new Promise((res, rej) => {
@@ -1709,7 +2066,15 @@ window.hardResetDB = async () => {
   showProgress('Сброс', 50, 'Очистка...', '', true);
   try {
     if (db) db.close();
-    if (rootDir) { const names = []; for await (const name of rootDir.keys()) names.push(name); for (const name of names) await rootDir.removeEntry(name); }
+    if (nativeStorage) {
+      const { Filesystem } = window.Capacitor.Plugins;
+      try { await Filesystem.rmdir({ path: 'Krypta', directory: 'DOCUMENTS', recursive: true }); } catch(e) {}
+    }
+    if (rootDir) {
+      const names = [];
+      for await (const name of rootDir.keys()) names.push(name);
+      for (const name of names) await rootDir.removeEntry(name);
+    }
     const req = indexedDB.deleteDatabase(DB_NAME);
     req.onsuccess = () => {
       if('caches' in window) caches.keys().then(names => names.forEach(name => caches.delete(name)));
@@ -1989,20 +2354,62 @@ function scheduleSlideshowNext(f) {
     else stopSlideshow();
   }, slideshowInterval);
 }
+
+// renderViewer — с нативным convertFileSrc
 async function renderViewer() {
   const myToken = ++viewerToken;
   const f = galleryFiles[currentGalleryIndex]; if(!f) return;
   const modal=$('viewerModal'), content=$('viewerContent'), title=$('viewerTitle');
-  const file = await getFileData(f);
-  if (myToken !== viewerToken) return;
-  if (!file) { content.innerHTML = `<div style="color:#fff;text-align:center;padding:20px;">Файл не найден</div>`; modal.classList.add('on'); return; }
-  title.textContent=f.name;
-  if(modal.dataset.url) URL.revokeObjectURL(modal.dataset.url);
-  const url=URL.createObjectURL(file); modal.dataset.url=url;
+
+  let url = null;
+  let isBlobUrl = false;
+  let fileForDownload = null;
+
+  if (nativeStorage) {
+    const { Filesystem } = window.Capacitor.Plugins;
+    try {
+      const uri = await Filesystem.getUri({
+        path: 'Krypta/files/' + f.fileId,
+        directory: 'DOCUMENTS'
+      });
+      url = Capacitor.convertFileSrc(uri.uri);
+    } catch(e) {
+      content.innerHTML = `<div style="color:#fff;text-align:center;padding:20px;">Файл не найден</div>`;
+      modal.classList.add('on');
+      return;
+    }
+  } else {
+    fileForDownload = await getFileData(f);
+    if (myToken !== viewerToken) return;
+    if (!fileForDownload) {
+      content.innerHTML = `<div style="color:#fff;text-align:center;padding:20px;">Файл не найден</div>`;
+      modal.classList.add('on');
+      return;
+    }
+    url = URL.createObjectURL(fileForDownload);
+    isBlobUrl = true;
+  }
+
+  title.textContent = f.name;
+  if(modal.dataset.url && modal.dataset.isBlob === '1') { try { URL.revokeObjectURL(modal.dataset.url); } catch(e) {} }
+  modal.dataset.url = url;
+  modal.dataset.isBlob = isBlobUrl ? '1' : '0';
   currentScale = 1;
+
   $('viewerDownload').onclick = async () => {
     try {
-      const ok = await downloadFileSafe(file, f.name);
+      if (nativeStorage) {
+        const { Filesystem, Share } = window.Capacitor.Plugins;
+        const uri = await Filesystem.getUri({
+          path: 'Krypta/files/' + f.fileId,
+          directory: 'DOCUMENTS'
+        });
+        try { await Share.share({ title: f.name, files: [uri.uri], url: uri.uri }); }
+        catch(e) { await Share.share({ title: f.name, url: uri.uri }); }
+        toast('Сохранение', 'Выберите куда сохранить');
+        return;
+      }
+      const ok = await downloadFileSafe(fileForDownload, f.name);
       if (ok) toast('Скачивание', f.name);
       else toast('Отменено', '', false);
     } catch(e) { toast('Ошибка', 'Не удалось скачать', true); }
@@ -2140,7 +2547,11 @@ $('viewerClose').onclick = () => {
   viewerToken++; slideToken++; stopSlideshow();
   $('viewerModal').classList.remove('on'); $('viewerContent').innerHTML='';
   $('viewerDelete').style.display = 'none';
-  if($('viewerModal').dataset.url) { URL.revokeObjectURL($('viewerModal').dataset.url); delete $('viewerModal').dataset.url; }
+  if($('viewerModal').dataset.url && $('viewerModal').dataset.isBlob === '1') {
+    try { URL.revokeObjectURL($('viewerModal').dataset.url); } catch(e) {}
+  }
+  delete $('viewerModal').dataset.url;
+  delete $('viewerModal').dataset.isBlob;
 };
 
 function showInfo(type, data) {
@@ -2264,6 +2675,7 @@ async function refresh() {
   renderGrid(true);
   updateStorageInfo(files);
 }
+// updateStorageInfo — с quotaMB вместо freeBytes
 async function updateStorageInfo(files = null) {
   try {
     if (!files) files = await getAllFiles();
@@ -2273,15 +2685,10 @@ async function updateStorageInfo(files = null) {
       const estimate = await navigator.storage.estimate();
       const usedMB = (estimate.usage / (1024 * 1024)).toFixed(2);
       $('storageUsage').textContent = `${usedMB} МБ`;
-      const freeBytes = (estimate.quota || 0) - (estimate.usage || 0);
-      const freeEl = $('storageFree');
-      if (freeEl) {
-        if (freeBytes > 0) {
-          const freeMB = freeBytes / (1024 * 1024);
-          freeEl.textContent = freeMB > 1024 ? `${(freeMB / 1024).toFixed(2)} ГБ` : `${freeMB.toFixed(2)} МБ`;
-        } else {
-          freeEl.textContent = '—';
-        }
+      const quotaEl = $('storageFree');
+      if (quotaEl) {
+        const quotaMB = (estimate.quota || 0) / (1024 * 1024);
+        quotaEl.textContent = quotaMB > 1024 ? `${(quotaMB / 1024).toFixed(2)} ГБ` : `${quotaMB.toFixed(0)} МБ`;
       }
     }
     const persistEl = $('storagePersist');
@@ -2868,7 +3275,19 @@ async function compressFiles(ids, isAutoBatch = false) {
         if (!blob || blob.size >= f.size) { processed++; continue; }
         const oldSize = f.size;
         const newSize = blob.size;
-        if (rootDir) {
+        // перезапись через универсальный слой
+        if (nativeStorage) {
+          const { Filesystem } = window.Capacitor.Plugins;
+          try {
+            const base64 = await blobToBase64(blob);
+            await Filesystem.writeFile({
+              path: 'Krypta/files/' + f.fileId,
+              data: base64,
+              directory: 'DOCUMENTS',
+              recursive: true
+            });
+          } catch(e) { console.error('Native rewrite err', e); }
+        } else if (rootDir) {
           try {
             const fh = await rootDir.getFileHandle(f.fileId, { create: true });
             const wr = await fh.createWritable(); await wr.write(blob); await wr.close();
@@ -2876,7 +3295,7 @@ async function compressFiles(ids, isAutoBatch = false) {
         }
         const s = st(SF, 'readwrite');
         const v = await p(s.get(f.id));
-        if (v) { v.size = blob.size; v.name = f.name.replace(/\.[^.]+$/, '.jpg'); if (!rootDir) v.blob = blob; await p(s.put(v)); }
+        if (v) { v.size = blob.size; v.name = f.name.replace(/\.[^.]+$/, '.jpg'); if (!nativeStorage && !rootDir) v.blob = blob; await p(s.put(v)); }
         const tb = await generateImageThumbnail(blob);
         if (tb) await saveThumb(f.fileId, tb);
         stats.push({ name: f.name, oldSize: oldSize, newSize: newSize });
@@ -2955,6 +3374,17 @@ $('ctxDownload').onclick = async () => {
   if (selectedFiles.length === 1 && selectedFolderIds.length === 0) {
     const f = selectedFiles[0];
     try {
+      if (nativeStorage) {
+        const { Filesystem, Share } = window.Capacitor.Plugins;
+        const uri = await Filesystem.getUri({
+          path: 'Krypta/files/' + f.fileId,
+          directory: 'DOCUMENTS'
+        });
+        try { await Share.share({ title: f.name, files: [uri.uri], url: uri.uri }); }
+        catch(e) { await Share.share({ title: f.name, url: uri.uri }); }
+        toast('Сохранение', 'Выберите куда сохранить');
+        return;
+      }
       const data = await getFileData(f);
       if (!data) return toast('Ошибка', 'Файл не найден', true);
       const ok = await downloadFileSafe(data, f.name || 'file');
@@ -3391,13 +3821,19 @@ window.importFromArchive = async (input) => {
         const entryMap = new Map(zipInfo.entries.map(e => [e.name, e]));
 
         const bgEntry = entryMap.get(basePath + 'background.jpg');
-        if (bgEntry && rootDir) {
+        if (bgEntry) {
           try {
-            const fh = await rootDir.getFileHandle(BG_FILE_ID, { create: true });
-            const wr = await fh.createWritable();
             const bgData = await extractEntryToBuffer(zipInfo, bgEntry);
-            await wr.write(new Blob([bgData]));
-            await wr.close();
+            if (nativeStorage) {
+              const { Filesystem } = window.Capacitor.Plugins;
+              const base64 = await blobToBase64(new Blob([bgData]));
+              await Filesystem.writeFile({ path: 'Krypta/files/custom-bg', data: base64, directory: 'DOCUMENTS', recursive: true });
+            } else if (rootDir) {
+              const fh = await rootDir.getFileHandle(BG_FILE_ID, { create: true });
+              const wr = await fh.createWritable();
+              await wr.write(new Blob([bgData]));
+              await wr.close();
+            }
           } catch(e) { console.warn('BG restore failed', e); }
         }
 
@@ -3408,14 +3844,20 @@ window.importFromArchive = async (input) => {
           checkAbort();
           try {
             const mainEntry = entryMap.get(basePath + `files/${f.fileId}`);
-            if (mainEntry && rootDir) await extractEntryToOPFS(zipInfo, mainEntry, f.fileId);
+            if (mainEntry) await extractEntryToOPFS(zipInfo, mainEntry, f.fileId);
             const thumbEntry = entryMap.get(basePath + `thumbs/${f.fileId}`);
-            if (thumbEntry && rootDir) {
+            if (thumbEntry) {
               const thumbData = await extractEntryToBuffer(zipInfo, thumbEntry);
-              const fh = await rootDir.getFileHandle(THUMB_PREFIX + f.fileId, { create: true });
-              const wr = await fh.createWritable();
-              await wr.write(new Blob([thumbData]));
-              await wr.close();
+              if (nativeStorage) {
+                const { Filesystem } = window.Capacitor.Plugins;
+                const base64 = await blobToBase64(new Blob([thumbData]));
+                await Filesystem.writeFile({ path: 'Krypta/thumbs/' + f.fileId, data: base64, directory: 'DOCUMENTS', recursive: true });
+              } else if (rootDir) {
+                const fh = await rootDir.getFileHandle(THUMB_PREFIX + f.fileId, { create: true });
+                const wr = await fh.createWritable();
+                await wr.write(new Blob([thumbData]));
+                await wr.close();
+              }
             }
           } catch (e) { console.warn('Restore failed', f.name, e); }
           i++;
@@ -3614,12 +4056,18 @@ window.importFromArchive = async (input) => {
       const entryMap = new Map(entries.map(e => [e.name, e]));
 
       const bgEntry = entryMap.get(basePath + 'background.jpg');
-      if (bgEntry && rootDir) {
+      if (bgEntry) {
         try {
-          const fh = await rootDir.getFileHandle(BG_FILE_ID, { create: true });
-          const wr = await fh.createWritable();
-          await wr.write(new Blob([bgEntry.data]));
-          await wr.close();
+          if (nativeStorage) {
+            const { Filesystem } = window.Capacitor.Plugins;
+            const base64 = await blobToBase64(new Blob([bgEntry.data]));
+            await Filesystem.writeFile({ path: 'Krypta/files/custom-bg', data: base64, directory: 'DOCUMENTS', recursive: true });
+          } else if (rootDir) {
+            const fh = await rootDir.getFileHandle(BG_FILE_ID, { create: true });
+            const wr = await fh.createWritable();
+            await wr.write(new Blob([bgEntry.data]));
+            await wr.close();
+          }
         } catch(e) {}
       }
 
@@ -3630,21 +4078,33 @@ window.importFromArchive = async (input) => {
         checkAbort();
         try {
           const mainEntry = entryMap.get(basePath + `files/${f.fileId}`);
-          if (mainEntry && mainEntry.data && rootDir) {
-            const fh = await rootDir.getFileHandle(f.fileId, { create: true });
-            const wr = await fh.createWritable();
-            const CHUNK = 4 * 1024 * 1024;
-            const d = mainEntry.data;
-            if (d.length <= CHUNK) await wr.write(d);
-            else { for (let off = 0; off < d.length; off += CHUNK) await wr.write(d.subarray(off, Math.min(off + CHUNK, d.length))); }
-            await wr.close();
+          if (mainEntry && mainEntry.data) {
+            if (nativeStorage) {
+              const { Filesystem } = window.Capacitor.Plugins;
+              const base64 = await blobToBase64(new Blob([mainEntry.data]));
+              await Filesystem.writeFile({ path: 'Krypta/files/' + f.fileId, data: base64, directory: 'DOCUMENTS', recursive: true });
+            } else if (rootDir) {
+              const fh = await rootDir.getFileHandle(f.fileId, { create: true });
+              const wr = await fh.createWritable();
+              const CHUNK = 4 * 1024 * 1024;
+              const d = mainEntry.data;
+              if (d.length <= CHUNK) await wr.write(d);
+              else { for (let off = 0; off < d.length; off += CHUNK) await wr.write(d.subarray(off, Math.min(off + CHUNK, d.length))); }
+              await wr.close();
+            }
           }
           const thumbEntry = entryMap.get(basePath + `thumbs/${f.fileId}`);
-          if (thumbEntry && thumbEntry.data && rootDir) {
-            const fh = await rootDir.getFileHandle(THUMB_PREFIX + f.fileId, { create: true });
-            const wr = await fh.createWritable();
-            await wr.write(new Blob([thumbEntry.data]));
-            await wr.close();
+          if (thumbEntry && thumbEntry.data) {
+            if (nativeStorage) {
+              const { Filesystem } = window.Capacitor.Plugins;
+              const base64 = await blobToBase64(new Blob([thumbEntry.data]));
+              await Filesystem.writeFile({ path: 'Krypta/thumbs/' + f.fileId, data: base64, directory: 'DOCUMENTS', recursive: true });
+            } else if (rootDir) {
+              const fh = await rootDir.getFileHandle(THUMB_PREFIX + f.fileId, { create: true });
+              const wr = await fh.createWritable();
+              await wr.write(new Blob([thumbEntry.data]));
+              await wr.close();
+            }
           }
         } catch (e) {}
         i++;
@@ -3784,7 +4244,7 @@ window.importFromArchive = async (input) => {
             deleted: false, deletedAt: null, fav: false, tags: []
           };
 
-          if (rootDir) {
+          if (nativeStorage || rootDir) {
             const ok = await writeDataToOPFS(fileId, entry.data);
             if (!ok) { failed++; }
             else {
@@ -4122,8 +4582,9 @@ function setupAndroidBackButton() {
 
 (async () => {
   try {
-    await initOPFS();
+    await initStorage();
     await openDB();
+    await migrateOPFSToNative();
     await loadTheme();
     await checkLock();
     setupAndroidBackButton();
