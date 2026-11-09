@@ -565,9 +565,10 @@ async function createOutputStream(filename) {
         if (!force && bufferSize < TARGET) return;
         const parts = buffer; buffer = []; bufferSize = 0;
         const blob = new Blob(parts);
+        const base64 = await blobToBase64(blob);
         if (aborted) return;
-        if (isFirst) { await Filesystem.writeFile({ path, data: blob, directory, recursive: true }); isFirst = false; }
-        else { await Filesystem.appendFile({ path, data: blob, directory }); }
+        if (isFirst) { await Filesystem.writeFile({ path, data: base64, directory, recursive: true }); isFirst = false; }
+        else { await Filesystem.appendFile({ path, data: base64, directory }); }
         await new Promise(r => setTimeout(r, 0));
       };
       return {
@@ -977,14 +978,14 @@ async function extractEntryToNative(zipInfo, entry, fileId) {
   const CHUNK = 1024 * 1024; 
   let isFirst = true;
 
-  const writeChunk = async (blob) => {
+  const writeChunk = async (uint8array) => {
+    const base64 = await blobToBase64(new Blob([uint8array]));
     if (isFirst) {
-      await Filesystem.writeFile({ path, data: blob, directory: 'DOCUMENTS', recursive: true });
+      await Filesystem.writeFile({ path, data: base64, directory: 'DOCUMENTS', recursive: true });
       isFirst = false;
     } else {
-      await Filesystem.appendFile({ path, data: blob, directory: 'DOCUMENTS' });
+      await Filesystem.appendFile({ path, data: base64, directory: 'DOCUMENTS' });
     }
-    // Пауза 25 мс после каждой записи, чтобы Android не убивал приложение
     await new Promise(r => setTimeout(r, 25)); 
   };
 
@@ -993,8 +994,8 @@ async function extractEntryToNative(zipInfo, entry, fileId) {
       let off = 0;
       while (off < entry.compSize) {
         const end = Math.min(off + CHUNK, entry.compSize);
-        const blobChunk = zipInfo.file.slice(dataStart + off, dataStart + end);
-        await writeChunk(blobChunk);
+        const buf = new Uint8Array(await zipInfo.file.slice(dataStart + off, dataStart + end).arrayBuffer());
+        await writeChunk(buf);
         off = end;
         await nextMacrotask();
       }
@@ -1021,7 +1022,7 @@ async function extractEntryToNative(zipInfo, entry, fileId) {
         const merged = new Uint8Array(partsSize);
         let o = 0;
         for (const c of parts) { merged.set(c, o); o += c.length; }
-        await writeChunk(new Blob([merged]));
+        await writeChunk(merged);
         parts = []; partsSize = 0;
       };
       
@@ -1298,7 +1299,6 @@ async function processBgThumbQueue() {
             : await generateVideoThumbnail(file);
           if (thumb) {
             await saveThumb(f.fileId, thumb);
-            // Обновляем плитку на экране, если она есть
             const tile = document.querySelector(`.tile[data-file-id="${f.id}"]`);
             if (tile) {
               const img = tile.querySelector('.tile-img');
@@ -1317,7 +1317,7 @@ async function processBgThumbQueue() {
         }
       }
     } catch(e) {}
-    await new Promise(r => setTimeout(r, 100)); // Даем отдохнуть телефону
+    await new Promise(r => setTimeout(r, 100));
   }
   bgThumbRunning = false;
 }
@@ -1495,7 +1495,14 @@ async function getFromOPFS(fileId) {
         const blob = await res.blob();
         if (blob.size > 0) return blob;
       }
-      return null;
+    } catch(e) { console.warn('fetch failed', e); }
+
+    try {
+      const result = await Filesystem.readFile({ path: 'Krypta/files/' + fileId, directory: 'DOCUMENTS' });
+      const binary = atob(result.data);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      return new Blob([bytes]);
     } catch(e) { return null; }
   }
   if (!rootDir) return null;
@@ -1565,11 +1572,12 @@ async function saveToOPFSChunked(fileId, file) {
         if (isAppInBackground) { await new Promise(r => setTimeout(r, 1000)); continue; }
         const end = Math.min(offset + CHUNK, total);
         const chunkBlob = file.slice(offset, end);
+        const base64 = await blobToBase64(chunkBlob);
         if (isFirst) {
-          await Filesystem.writeFile({ path, data: chunkBlob, directory: 'DOCUMENTS', recursive: true });
+          await Filesystem.writeFile({ path, data: base64, directory: 'DOCUMENTS', recursive: true });
           isFirst = false;
         } else {
-          await Filesystem.appendFile({ path, data: chunkBlob, directory: 'DOCUMENTS' });
+          await Filesystem.appendFile({ path, data: base64, directory: 'DOCUMENTS' });
         }
         offset = end;
         const now = Date.now();
@@ -2171,9 +2179,9 @@ async function loadTileImage(tileEl) {
     let thumb = await getThumb(f);
     let hasFile = !!thumb;
     
-    // Убрали скачивание всего файла для генерации превью, чтобы не словить OOM
     if (!thumb) { 
       if (skelEl) skelEl.remove(); 
+      if (f.type === 'image' || f.type === 'video') queueBgThumb(f);
       return; 
     }
     
@@ -2230,11 +2238,12 @@ async function writeBlobToCacheChunked(blob, cachePath, onProgress) {
   while (offset < total) {
     const end = Math.min(offset + CHUNK_SIZE, total);
     const chunk = blob.slice(offset, end);
+    const base64 = await blobToBase64(chunk);
     if (isFirst) {
-      await Filesystem.writeFile({ path: cachePath, data: chunk, directory: 'CACHE', recursive: true });
+      await Filesystem.writeFile({ path: cachePath, data: base64, directory: 'CACHE', recursive: true });
       isFirst = false;
     } else {
-      await Filesystem.appendFile({ path: cachePath, data: chunk, directory: 'CACHE' });
+      await Filesystem.appendFile({ path: cachePath, data: base64, directory: 'CACHE' });
     }
     offset = end;
     if (onProgress) onProgress(offset / total);
@@ -2441,12 +2450,14 @@ async function renderViewer() {
   if(f.type === 'image') {
     const img = document.createElement('img'); img.src = url; container.appendChild(img);
     img.onerror = async () => {
-      const fileBlob = await getFileData(f);
+      const fileBlob = await getFromOPFS(f.fileId);
       if (fileBlob) {
         const blobUrl = URL.createObjectURL(fileBlob);
         img.src = blobUrl;
         modal.dataset.url = blobUrl;
         modal.dataset.isBlob = '1';
+      } else {
+        content.innerHTML = `<div style="color:#fff;text-align:center;padding:20px;">Не удалось загрузить файл</div>`;
       }
     };
     if (slideshowActive) scheduleSlideshowNext(f);
@@ -3990,8 +4001,6 @@ window.importFromArchive = async (input) => {
 
           await extractEntryToOPFS(zipInfo, entry, fileId);
 
-          // ОТКАЗЫВАЕМСЯ ОТ ЧТЕНИЯ ФАЙЛА РАДИ ХЕША
-          // Это вызывало жуткие тормоза и вылеты
           let hash = '';
           let isDuplicate = false;
 
@@ -4000,7 +4009,6 @@ window.importFromArchive = async (input) => {
             skipped++;
           } else {
             const type = mime.startsWith('image/') ? 'image' : 'video';
-            // Отказываемся от EXIF при импорте для скорости
             const exifDate = null; 
             const record = {
               fileId, name: fileName, type, mime,
@@ -4028,7 +4036,6 @@ window.importFromArchive = async (input) => {
       }
       await flushPending();
 
-      // Ставим в очередь на превью ТОЛЬКО после того как всё записано!
       importedFiles.forEach(f => queueBgThumb(f));
 
       const elapsed = (performance.now() - t0) / 1000;
@@ -4232,7 +4239,6 @@ window.importFromArchive = async (input) => {
 
         let hash = '';
         let isDuplicate = false;
-        // Отказываемся от хеширования для скорости
         if (false) {
           try { hash = await calculateHash(fileObj); } catch(e) {}
         }
