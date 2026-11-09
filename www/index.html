@@ -39,6 +39,22 @@
   justify-content: center;
   flex-shrink: 0;
 }
+.tile.broken {
+  opacity: 0.5;
+  position: relative;
+}
+.tile.broken::after {
+  content: "⚠️";
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  background: rgba(0,0,0,0.5);
+  z-index: 6;
+  pointer-events: none;
+}
 </style>
 </head>
 <body data-theme="dark" data-view="files">
@@ -409,6 +425,14 @@
           <span>Занято в системе</span>
           <span id="storageUsage" style="font-weight:700;">...</span>
         </div>
+        <div class="settings-row">
+          <span>Свободно</span>
+          <span id="storageFree" style="font-weight:700;color:#34d399;">...</span>
+        </div>
+        <div class="settings-row">
+          <span>Постоянное хранилище</span>
+          <span id="storagePersist" style="font-weight:700;">...</span>
+        </div>
       </div>
     </div>
 
@@ -496,7 +520,7 @@
         </div>
         <div class="settings-row">
           <span>Версия</span>
-          <span class="version-badge">v1.0.3</span>
+          <span class="version-badge">v1.0.4</span>
         </div>
         <div class="settings-row" style="border-bottom:none;">
           <span>Режим</span>
