@@ -101,7 +101,6 @@ async function initStorage() {
     try { await Filesystem.mkdir({ path: 'Krypta/files', directory: 'DOCUMENTS', recursive: true }); } catch(e) {}
     try { await Filesystem.mkdir({ path: 'Krypta/thumbs', directory: 'DOCUMENTS', recursive: true }); } catch(e) {}
   }
-  // rootDir нужен и на native — для миграции старых файлов из OPFS
   if (navigator.storage && navigator.storage.getDirectory) {
     try {
       rootDir = await navigator.storage.getDirectory();
@@ -460,7 +459,6 @@ async function checkFreeSpace(requiredBytes, label) {
     const usage = est.usage || 0;
     if (quota <= 0) return true;
     const free = quota - usage;
-    // На native файлы лежат в Documents, квота WebView не показательна — пропускаем
     if (nativeStorage) return true;
     if (free < requiredBytes * 1.15) {
       const freeMB = (free / 1048576).toFixed(0);
@@ -521,6 +519,7 @@ function showConfirm(title, text, okText = 'ОК', cancelText = 'Отмена') 
     modal.classList.add('on');
   });
 }
+
 const CRC_TABLE = (() => {
   const t = new Uint32Array(256);
   for (let i = 0; i < 256; i++) { let c=i; for (let k=0;k<8;k++) c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1); t[i]=c>>>0; }
@@ -556,7 +555,7 @@ async function createOutputStream(filename) {
       try { await Filesystem.deleteFile({ path, directory }); } catch(e) {}
       let buffer = [];
       let bufferSize = 0;
-      const TARGET = 4 * 1024 * 1024;
+      const TARGET = 1024 * 1024;
       let isFirst = true;
       let writeChain = Promise.resolve();
       let bytesWritten = 0;
@@ -566,10 +565,10 @@ async function createOutputStream(filename) {
         if (!force && bufferSize < TARGET) return;
         const parts = buffer; buffer = []; bufferSize = 0;
         const blob = new Blob(parts);
-        const base64 = await blobToBase64(blob);
         if (aborted) return;
-        if (isFirst) { await Filesystem.writeFile({ path, data: base64, directory, recursive: true }); isFirst = false; }
-        else { await Filesystem.appendFile({ path, data: base64, directory }); }
+        if (isFirst) { await Filesystem.writeFile({ path, data: blob, directory, recursive: true }); isFirst = false; }
+        else { await Filesystem.appendFile({ path, data: blob, directory }); }
+        await new Promise(r => setTimeout(r, 0));
       };
       return {
         type: 'capacitor',
@@ -892,7 +891,6 @@ async function parseZipStreaming(file) {
   return { file, entries };
 }
 
-// extractEntryToOPFS с нативной веткой
 async function extractEntryToOPFS(zipInfo, entry, fileId) {
   if (nativeStorage) return extractEntryToNative(zipInfo, entry, fileId);
 
@@ -969,25 +967,25 @@ async function extractEntryToOPFS(zipInfo, entry, fileId) {
   }
 }
 
-// Нативный аналог для Capacitor
 async function extractEntryToNative(zipInfo, entry, fileId) {
   const { Filesystem } = window.Capacitor.Plugins;
   const path = 'Krypta/files/' + fileId;
   const lhBuf = new Uint8Array(await zipInfo.file.slice(entry.localOffset, entry.localOffset + 30).arrayBuffer());
   const lhDV = new DataView(lhBuf.buffer);
   const dataStart = entry.localOffset + 30 + lhDV.getUint16(26, true) + lhDV.getUint16(28, true);
-  const CHUNK = 4 * 1024 * 1024;
+  
+  const CHUNK = 1024 * 1024; 
   let isFirst = true;
   let lastYield = Date.now();
 
-  const writeChunk = async (bytes) => {
-    const base64 = await blobToBase64(new Blob([bytes]));
+  const writeChunk = async (blob) => {
     if (isFirst) {
-      await Filesystem.writeFile({ path, data: base64, directory: 'DOCUMENTS', recursive: true });
+      await Filesystem.writeFile({ path, data: blob, directory: 'DOCUMENTS', recursive: true });
       isFirst = false;
     } else {
-      await Filesystem.appendFile({ path, data: base64, directory: 'DOCUMENTS' });
+      await Filesystem.appendFile({ path, data: blob, directory: 'DOCUMENTS' });
     }
+    await new Promise(r => setTimeout(r, 0)); 
   };
 
   try {
@@ -995,10 +993,10 @@ async function extractEntryToNative(zipInfo, entry, fileId) {
       let off = 0;
       while (off < entry.compSize) {
         const end = Math.min(off + CHUNK, entry.compSize);
-        const buf = new Uint8Array(await zipInfo.file.slice(dataStart + off, dataStart + end).arrayBuffer());
-        await writeChunk(buf);
+        const blobChunk = zipInfo.file.slice(dataStart + off, dataStart + end);
+        await writeChunk(blobChunk);
         off = end;
-        if (Date.now() - lastYield > 150) { await nextMacrotask(); lastYield = Date.now(); }
+        if (Date.now() - lastYield > 100) { await nextMacrotask(); lastYield = Date.now(); }
       }
     } else if (entry.method === 8) {
       const ds = new DecompressionStream('deflate-raw');
@@ -1012,19 +1010,21 @@ async function extractEntryToNative(zipInfo, entry, fileId) {
           const buf = new Uint8Array(await zipInfo.file.slice(offset, chunkEnd).arrayBuffer());
           await dsWriter.write(buf);
           offset = chunkEnd;
-          if (Date.now() - lastYield > 150) { await nextMacrotask(); lastYield = Date.now(); }
+          if (Date.now() - lastYield > 100) { await nextMacrotask(); lastYield = Date.now(); }
         }
         await dsWriter.close();
       })();
+      
       let parts = [], partsSize = 0;
       const flushParts = async () => {
         if (!partsSize) return;
         const merged = new Uint8Array(partsSize);
         let o = 0;
         for (const c of parts) { merged.set(c, o); o += c.length; }
-        await writeChunk(merged);
+        await writeChunk(new Blob([merged]));
         parts = []; partsSize = 0;
       };
+      
       try {
         while (true) {
           const { done, value } = await dsReader.read();
@@ -1032,7 +1032,7 @@ async function extractEntryToNative(zipInfo, entry, fileId) {
           parts.push(value); partsSize += value.length;
           if (partsSize >= CHUNK) {
             await flushParts();
-            if (Date.now() - lastYield > 150) { await nextMacrotask(); lastYield = Date.now(); }
+            if (Date.now() - lastYield > 100) { await nextMacrotask(); lastYield = Date.now(); }
           }
         }
         await flushParts();
@@ -1225,7 +1225,6 @@ async function generateVideoThumbnail(file, maxSize = 300) {
   });
 }
 
-// ===== Миниатюры: нативные версии =====
 async function saveThumb(fileId, blob) {
   if (!blob) return;
   if (nativeStorage) {
@@ -1469,7 +1468,6 @@ document.querySelectorAll('#trashAutoPills .pill').forEach(p => {
   p.onclick = () => setTrashAutoDays(Number(p.dataset.val));
 });
 
-// getFromOPFS / deleteFromOPFS — нативные версии
 async function getFromOPFS(fileId) {
   if (nativeStorage) {
     const { Filesystem } = window.Capacitor.Plugins;
@@ -1534,14 +1532,13 @@ async function calculateHash(file) {
   }
 }
 
-// saveToOPFSChunked — нативная версия + OPFS fallback
 async function saveToOPFSChunked(fileId, file) {
   if (nativeStorage) {
     const { Filesystem } = window.Capacitor.Plugins;
     const path = 'Krypta/files/' + fileId;
     try { await Filesystem.deleteFile({ path, directory: 'DOCUMENTS' }); } catch(e) {}
     try {
-      const CHUNK = 4 * 1024 * 1024;
+      const CHUNK = 1024 * 1024;
       const total = file.size;
       let offset = 0;
       let isFirst = true;
@@ -1549,12 +1546,12 @@ async function saveToOPFSChunked(fileId, file) {
       while (offset < total) {
         if (isAppInBackground) { await new Promise(r => setTimeout(r, 1000)); continue; }
         const end = Math.min(offset + CHUNK, total);
-        const base64 = await blobToBase64(file.slice(offset, end));
+        const chunkBlob = file.slice(offset, end);
         if (isFirst) {
-          await Filesystem.writeFile({ path, data: base64, directory: 'DOCUMENTS', recursive: true });
+          await Filesystem.writeFile({ path, data: chunkBlob, directory: 'DOCUMENTS', recursive: true });
           isFirst = false;
         } else {
-          await Filesystem.appendFile({ path, data: base64, directory: 'DOCUMENTS' });
+          await Filesystem.appendFile({ path, data: chunkBlob, directory: 'DOCUMENTS' });
         }
         offset = end;
         const now = Date.now();
@@ -1564,6 +1561,7 @@ async function saveToOPFSChunked(fileId, file) {
             `${(offset/1048576).toFixed(1)} / ${(total/1048576).toFixed(1)} МБ`);
           await nextMacrotask();
         }
+        await new Promise(r => setTimeout(r, 0));
       }
       return true;
     } catch(e) { console.error('Native save error', e); return false; }
@@ -1950,7 +1948,6 @@ window.openDupGallery = async (fileIds, clickedId) => {
   renderViewer();
 };
 
-// compactDB с нативной очисткой
 async function compactDB() {
   if (!await showConfirm('Сжатие базы', 'Очистить корзину, удалить "осиротевшие" файлы и пересобрать базу?')) return;
   await acquireWakeLock();
@@ -2003,7 +2000,6 @@ async function compactDB() {
 
     const validFileIds = new Set(files.map(f => f.fileId));
 
-    // Native cleanup
     if (nativeStorage) {
       showProgress('Очистка', 40, 'Удаление лишних файлов...', '');
       const { Filesystem } = window.Capacitor.Plugins;
@@ -2024,7 +2020,6 @@ async function compactDB() {
       } catch(e) { console.warn('Native cleanup err', e); }
     }
 
-    // OPFS legacy cleanup
     if (rootDir) {
       try {
         const toRemove = [];
@@ -2220,7 +2215,7 @@ async function blobToBase64(blob) {
 
 async function writeBlobToCacheChunked(blob, cachePath, onProgress) {
   const { Filesystem } = window.Capacitor.Plugins;
-  const CHUNK_SIZE = 4 * 1024 * 1024;
+  const CHUNK_SIZE = 1024 * 1024;
   const total = blob.size;
   try { await Filesystem.deleteFile({ path: cachePath, directory: 'CACHE' }); } catch (e) {}
   let offset = 0;
@@ -2228,12 +2223,11 @@ async function writeBlobToCacheChunked(blob, cachePath, onProgress) {
   while (offset < total) {
     const end = Math.min(offset + CHUNK_SIZE, total);
     const chunk = blob.slice(offset, end);
-    const base64 = await blobToBase64(chunk);
     if (isFirst) {
-      await Filesystem.writeFile({ path: cachePath, data: base64, directory: 'CACHE', recursive: true });
+      await Filesystem.writeFile({ path: cachePath, data: chunk, directory: 'CACHE', recursive: true });
       isFirst = false;
     } else {
-      await Filesystem.appendFile({ path: cachePath, data: base64, directory: 'CACHE' });
+      await Filesystem.appendFile({ path: cachePath, data: chunk, directory: 'CACHE' });
     }
     offset = end;
     if (onProgress) onProgress(offset / total);
@@ -2355,7 +2349,6 @@ function scheduleSlideshowNext(f) {
   }, slideshowInterval);
 }
 
-// renderViewer — с нативным convertFileSrc
 async function renderViewer() {
   const myToken = ++viewerToken;
   const f = galleryFiles[currentGalleryIndex]; if(!f) return;
@@ -2675,7 +2668,6 @@ async function refresh() {
   renderGrid(true);
   updateStorageInfo(files);
 }
-// updateStorageInfo — с quotaMB вместо freeBytes
 async function updateStorageInfo(files = null) {
   try {
     if (!files) files = await getAllFiles();
@@ -3275,7 +3267,6 @@ async function compressFiles(ids, isAutoBatch = false) {
         if (!blob || blob.size >= f.size) { processed++; continue; }
         const oldSize = f.size;
         const newSize = blob.size;
-        // перезапись через универсальный слой
         if (nativeStorage) {
           const { Filesystem } = window.Capacitor.Plugins;
           try {
