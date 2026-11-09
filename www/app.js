@@ -44,6 +44,7 @@ let scrollTimeout = null, scrollRaf = null;
 let editIsFolder = true, editId = null, moveMode = 'move';
 let isDragSelecting = false, lastHoveredTile = null, lastDragTime = 0;
 let searchTimer = null;
+let lastScrollTime = 0;
 let bgThumbQueue = [], bgThumbRunning = false;
 let wakeLock = null, isAppInBackground = false;
 let soundEnabled = true, folderPreviewEnabled = true, audioCtx = null;
@@ -551,6 +552,7 @@ async function extractExifDate(file) {
   } catch(e) {}
   return null;
 }
+
 async function generateImageThumbnail(file, maxSize = 300) {
   if (typeof createImageBitmap === 'function') {
     try {
@@ -678,7 +680,21 @@ async function loadTileImage(tileEl, f) {
   const skelEl = tileEl.querySelector('.skeleton');
 
   const cached = cacheGetPreview(filePreviewCache, f.fileId);
-  if (cached) { imgEl.onload = () => { imgEl.classList.add('loaded'); if (skelEl) skelEl.remove(); }; imgEl.src = cached; return; }
+  if (cached) {
+    try {
+      const probe = new Image();
+      probe.src = cached;
+      await probe.decode();
+      if (!tileEl.isConnected) return;
+      imgEl.src = cached;
+      imgEl.classList.add('loaded');
+      if (skelEl) skelEl.remove();
+    } catch(e) {
+      imgEl.onload = () => { imgEl.classList.add('loaded'); if (skelEl) skelEl.remove(); };
+      imgEl.src = cached;
+    }
+    return;
+  }
 
   try {
     let thumb = await getThumb(f);
@@ -705,6 +721,7 @@ async function loadTileImage(tileEl, f) {
 function computeGridLayout() {
   const wrap = $('gridWrap'); if (!wrap) return;
   const width = wrap.clientWidth;
+  if (!width) return;
   const colsStr = getComputedStyle(document.documentElement).getPropertyValue('--cols').trim();
   const m = colsStr.match(/repeat\(\s*(\d+)/);
   const cols = m ? parseInt(m[1]) : 3;
@@ -760,13 +777,14 @@ function updateVirtualGrid() {
   }
   computeGridLayout();
   const { cols, rowHeight } = virtualState;
+  if (!rowHeight) return;
   const totalRows = Math.ceil(items.length / cols);
   const totalHeight = virtualState.paddingTop * 2 + totalRows * rowHeight - 10;
   wrap.style.height = totalHeight + 'px';
   grid.style.position = 'absolute';
   const scrollY = window.scrollY, vh = window.innerHeight;
   const wrapTop = wrap.getBoundingClientRect().top + scrollY;
-  const BUFFER = 3;
+  const BUFFER = 6;
   let firstRow = Math.floor((scrollY - wrapTop - virtualState.paddingTop) / rowHeight) - BUFFER;
   let lastRow = Math.ceil((scrollY - wrapTop + vh - virtualState.paddingTop) / rowHeight) + BUFFER;
   firstRow = Math.max(0, firstRow);
@@ -778,13 +796,27 @@ function updateVirtualGrid() {
   const [prevStart, prevEnd] = virtualState.lastRange;
   if (prevStart === startIndex && prevEnd === endIndex) return;
   virtualState.lastRange = [startIndex, endIndex];
+
+  const existing = new Map();
+  for (const child of grid.children) {
+    const id = child.dataset.id;
+    if (id) existing.set(id + ':' + child.dataset.type, child);
+  }
+
   const newTiles = [];
   const frag = document.createDocumentFragment();
   for (let i = startIndex; i < endIndex; i++) {
     const item = items[i];
-    const el = item._isFolder ? createFolderTile(item) : createFileTile(item);
+    const key = String(item.id) + ':' + (item._isFolder ? 'folder' : 'file');
+    let el = existing.get(key);
+    if (el) {
+      existing.delete(key);
+      el.classList.toggle('sel', item._isFolder ? folderSel.has(item.id) : sel.has(item.id));
+    } else {
+      el = item._isFolder ? createFolderTile(item) : createFileTile(item);
+      newTiles.push({ el, item });
+    }
     frag.appendChild(el);
-    newTiles.push({ el, item });
   }
   grid.innerHTML = '';
   grid.appendChild(frag);
@@ -1002,6 +1034,7 @@ async function autoCleanTrash() {
   const oldFolders = folders.filter(f => f.deleted && f.deletedAt && (Date.now() - f.deletedAt > ms)).map(f => f.id);
   if (oldFiles.length || oldFolders.length) { try { await deletePermanent(oldFiles, oldFolders); } catch(e) {} }
 }
+
 window.findDuplicates = async () => {
   const files = await getAllFiles(); const active = files.filter(f => !f.deleted);
   const bySize = {}; active.forEach(f => { const s = f.size || 0; if (!bySize[s]) bySize[s] = []; bySize[s].push(f); });
@@ -1492,6 +1525,7 @@ function renderGrid(reset = true) {
 }
 
 window.addEventListener('scroll', () => {
+  lastScrollTime = Date.now();
   document.body.classList.add('is-scrolling');
   clearTimeout(scrollTimeout); scrollTimeout = setTimeout(() => document.body.classList.remove('is-scrolling'), 150);
   if (scrollRaf) return;
@@ -1515,13 +1549,13 @@ gridEl.addEventListener('touchstart', e => {
   startX = e.touches[0].clientX; startY = e.touches[0].clientY;
   clearTimeout(pressTimer);
   pressTimer = setTimeout(() => {
-    if (!isScrolling) {
-      isLongPress = true; isDragSelecting = true; document.body.classList.add('selecting');
-      const id = Number(tile.dataset.id), type = tile.dataset.type;
-      if (type === 'file' && !sel.has(id)) toggleFileSelection(id, tile);
-      if (type === 'folder' && !folderSel.has(id)) toggleFolderSelection(id, tile);
-      lastHoveredTile = tile; if (navigator.vibrate) navigator.vibrate(50); updateUI();
-    }
+    if (isScrolling) return;
+    if (Date.now() - lastScrollTime < 400) return;
+    isLongPress = true; isDragSelecting = true; document.body.classList.add('selecting');
+    const id = Number(tile.dataset.id), type = tile.dataset.type;
+    if (type === 'file' && !sel.has(id)) toggleFileSelection(id, tile);
+    if (type === 'folder' && !folderSel.has(id)) toggleFolderSelection(id, tile);
+    lastHoveredTile = tile; if (navigator.vibrate) navigator.vibrate(50); updateUI();
   }, 500);
 }, {passive:true});
 gridEl.addEventListener('touchmove', e => {
@@ -1897,10 +1931,18 @@ $('ctxDownload').onclick = async () => {
     const usedPaths = new Set(); const finalItems = [];
     for (const item of rawItems) {
       let up = item.zipPath;
-      if (usedPaths.has(up.toLowerCase())) { const si = up.lastIndexOf('/'); const dp = si >= 0 ? up.slice(0, si+1) : ''; const fpart = up.slice(si+1); const di = fpart.lastIndexOf('.'); const bn = di > 0 ? fpart.slice(0, di) : fpart; const ext = di > 0 ? fpart.slice(di) : ''; let c = 1; while (usedPaths.has(up.toLowerCase())) { up = `${dp}${bn}_${c}${ext}`; c++; } }
-      usedPaths.add(up.toLowerCase()); finalItems.push({ name: up, getBlob: async () => await getFileData(it => it).file });
-      const last = finalItems[finalItems.length - 1];
-      last.getBlob = async () => await getFileData(item.file);
+      if (usedPaths.has(up.toLowerCase())) {
+        const si = up.lastIndexOf('/');
+        const dp = si >= 0 ? up.slice(0, si+1) : '';
+        const fpart = up.slice(si+1);
+        const di = fpart.lastIndexOf('.');
+        const bn = di > 0 ? fpart.slice(0, di) : fpart;
+        const ext = di > 0 ? fpart.slice(di) : '';
+        let c = 1;
+        while (usedPaths.has(up.toLowerCase())) { up = `${dp}${bn}_${c}${ext}`; c++; }
+      }
+      usedPaths.add(up.toLowerCase());
+      finalItems.push({ name: up, getBlob: async () => await getFileData(item.file) });
     }
     showProgress('Экспорт', 0, `0/${finalItems.length}`, '', true);
     stream = await createOutputStream(zipName);
@@ -1959,7 +2001,9 @@ window.setTheme = async name => { document.body.dataset.theme=name; await setSet
 window.setCols = async cols => { document.documentElement.style.setProperty('--cols',cols); await setSetting('cols',cols); document.querySelectorAll('.font-opt[data-c]').forEach(el=>el.classList.toggle('sel', el.dataset.c===cols)); virtualState.lastRange = [-1,-1]; renderGrid(true); };
 async function loadTheme() {
   const s = await getAllSettings();
-  let t = s.theme || 'dark'; if (!['dark','light','amoled','nord'].includes(t)) t = 'dark';
+  let t = s.theme || 'dark';
+  const ALLOWED = ['dark', 'light', 'warm', 'sepia'];
+  if (!ALLOWED.includes(t)) t = 'dark';
   const c = s.cols || 'repeat(3, 1fr)';
   await setTheme(t); await setCols(c);
   const savedSlideshowMs = Number(s.slideshowInterval ?? DEFAULT_SLIDESHOW_MS);
