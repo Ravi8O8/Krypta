@@ -132,11 +132,13 @@ header {
 .tab.active[data-type="image"] svg, .tab.active[data-type="video"] svg { fill: var(--acc); }
 .tab.active[data-type="fav"] svg { fill: #fbbf24; }
 
-#grid{display:grid;grid-template-columns:var(--cols);gap:10px;padding:16px;touch-action:pan-y;}
+#gridWrap{position:relative;width:100%;}
+#grid{position:absolute;left:16px;right:16px;top:0;display:grid;grid-template-columns:var(--cols);gap:10px;touch-action:pan-y;}
+
 .tile {
   position:relative; aspect-ratio:1; border-radius:var(--r-lg); overflow:hidden;
   background:var(--card); cursor:pointer; display:flex; align-items:center; justify-content:center;
-  border:1px solid var(--bd); contain:layout style paint; content-visibility:auto; contain-intrinsic-size:120px 120px;
+  border:1px solid var(--bd); contain:layout style paint;
   transform:translateZ(0); backface-visibility:hidden;
 }
 .tile:active{transform:scale(.94) translateZ(0);}
@@ -387,34 +389,10 @@ body[data-view="trash"] #btnEmptyTrash{flex:1;}
 .toast-title.error{color:var(--danger);}
 .toast-sub{font-size:13px;color:var(--mut);}
 
-#toast.with-action {
-  padding: 16px 20px;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 4px;
-}
-#toast.with-action.on {
-  pointer-events: auto;
-}
-#toast .toast-action {
-  background: var(--acc);
-  color: #fff;
-  padding: 10px 20px;
-  border-radius: var(--r-pill);
-  font-size: 14px;
-  font-weight: 700;
-  border: none;
-  cursor: pointer;
-  margin-top: 8px;
-  font-family: inherit;
-  letter-spacing: inherit;
-  transition: transform .15s var(--ease), background .15s var(--ease);
-}
-#toast .toast-action:active {
-  transform: scale(0.96);
-  background: color-mix(in srgb, var(--acc) 85%, black);
-}
+#toast.with-action { padding: 16px 20px; display: flex; flex-direction: column; align-items: stretch; gap: 4px; }
+#toast.with-action.on { pointer-events: auto; }
+#toast .toast-action { background: var(--acc); color: #fff; padding: 10px 20px; border-radius: var(--r-pill); font-size: 14px; font-weight: 700; border: none; cursor: pointer; margin-top: 8px; font-family: inherit; letter-spacing: inherit; transition: transform .15s var(--ease), background .15s var(--ease); }
+#toast .toast-action:active { transform: scale(0.96); background: color-mix(in srgb, var(--acc) 85%, black); }
 
 input[type=file]{display:none;}
 input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:4px;border-radius:2px;background:var(--bd);outline:none;padding:0;margin:12px 0;}
