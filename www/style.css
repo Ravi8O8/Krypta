@@ -159,6 +159,7 @@ header {
 }
 .tile img.loaded{opacity:1;}
 
+/* ===== FOLDER PREVIEWS ===== */
 .tile.folder.has-preview .body {
   position: absolute; bottom: 0; left: 0; right: 0; z-index: 3;
   background: linear-gradient(transparent, rgba(0,0,0,0.8));
@@ -181,6 +182,7 @@ header {
   width: 100%; height: 100%; object-fit: cover; opacity: 0.9;
   transition: opacity .2s var(--ease);
 }
+/* =========================== */
 
 .folder-svg{width:40px;height:40px;fill:currentColor;}
 .tile .lbl{font-size:11px;color:var(--mut);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;padding:0 4px;}
@@ -395,6 +397,7 @@ body[data-view="trash"] #btnEmptyTrash{flex:1;}
 .toast-title.error{color:var(--danger);}
 .toast-sub{font-size:13px;color:var(--mut);}
 
+/* ===== Toast with action (Undo) ===== */
 #toast.with-action {
   padding: 16px 20px;
   display: flex;
