@@ -1472,12 +1472,7 @@ async function updateStorageInfo(files = null) {
     if (navigator.storage && navigator.storage.estimate) {
       const estimate = await navigator.storage.estimate();
       $('storageUsage').textContent = ((estimate.usage||0)/(1024*1024)).toFixed(2) + ' МБ';
-      const freeBytes = (estimate.quota || 0) - (estimate.usage || 0);
-      const freeEl = $('storageFree');
-      if (freeEl) { if (freeBytes > 0) { const mb = freeBytes/1048576; freeEl.textContent = mb > 1024 ? `${(mb/1024).toFixed(2)} ГБ` : `${mb.toFixed(2)} МБ`; } else freeEl.textContent = '—'; }
     }
-    const persistEl = $('storagePersist');
-    if (persistEl) { const persisted = (navigator.storage && navigator.storage.persisted) ? await navigator.storage.persisted() : false; persistEl.textContent = persisted ? '✅ Да' : '⚠️ Нет'; persistEl.style.color = persisted ? '#34d399' : '#fbbf24'; }
   } catch(e) {}
 }
 
