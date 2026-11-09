@@ -11,50 +11,15 @@
 <link rel="stylesheet" href="style.css">
 <style>
 .btn-scope {
-  flex-shrink: 0;
-  width: 42px;
-  height: 42px;
-  background: var(--card);
-  border: 1px solid var(--bd);
-  border-radius: var(--r-md);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--mut);
-  transition: all 0.2s var(--ease);
+  flex-shrink: 0; width: 42px; height: 42px;
+  background: var(--card); border: 1px solid var(--bd);
+  border-radius: var(--r-md); display: flex; align-items: center; justify-content: center;
+  color: var(--mut); transition: all 0.2s var(--ease);
 }
-.btn-scope.on {
-  background: color-mix(in srgb, var(--acc) 15%, transparent);
-  border-color: var(--acc);
-  color: var(--acc);
-}
-#progCancelBtn {
-  display: none;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  background: var(--danger);
-  color: #fff;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-.tile.broken {
-  opacity: 0.5;
-  position: relative;
-}
-.tile.broken::after {
-  content: "⚠️";
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 28px;
-  background: rgba(0,0,0,0.5);
-  z-index: 6;
-  pointer-events: none;
-}
+.btn-scope.on { background: color-mix(in srgb, var(--acc) 15%, transparent); border-color: var(--acc); color: var(--acc); }
+#progCancelBtn { display: none; width: 28px; height: 28px; border-radius: 50%; background: var(--danger); color: #fff; align-items: center; justify-content: center; flex-shrink: 0; }
+.tile.broken { opacity: 0.5; position: relative; }
+.tile.broken::after { content: "⚠️"; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 28px; background: rgba(0,0,0,0.5); z-index: 6; pointer-events: none; }
 </style>
 </head>
 <body data-theme="dark" data-view="files">
@@ -64,9 +29,7 @@
     <span id="progTitle">Обработка...</span>
     <span style="display:flex;align-items:center;gap:10px;">
       <span id="progPercent">0%</span>
-      <button id="progCancelBtn" title="Отменить">
-        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      </button>
+      <button id="progCancelBtn" title="Отменить"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
     </span>
   </div>
   <div class="prog-bar-bg"><div class="prog-bar-fill" id="progFill"></div></div>
@@ -85,55 +48,32 @@
 <div id="viewerModal">
   <div class="viewer-header">
     <div class="viewer-title" id="viewerTitle">Файл</div>
-    <button class="btn-action" id="viewerSlideshow" title="Слайдшоу">
-      <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><polygon points="7 4 20 12 7 20 7 4"/></svg>
-    </button>
-    <button class="btn-action" id="viewerDelete" style="display:none;" title="В корзину">
-      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-    </button>
+    <button class="btn-action" id="viewerSlideshow" title="Слайдшоу"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><polygon points="7 4 20 12 7 20 7 4"/></svg></button>
+    <button class="btn-action" id="viewerDelete" style="display:none;" title="В корзину"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
     <button class="btn-action primary" id="viewerDownload">Скачать</button>
-    <button class="btn-action" id="viewerInfo">
-      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
-    </button>
-    <button class="btn-action" id="viewerClose">
-      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-    </button>
+    <button class="btn-action" id="viewerInfo"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></button>
+    <button class="btn-action" id="viewerClose"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
   </div>
   <div id="viewerContent"></div>
 </div>
 
 <div class="modal" id="modalInfo">
-  <div class="box">
-    <div class="drag-handle"></div>
-    <h3>Свойства</h3>
-    <div id="infoRows" style="width:100%;margin-bottom:16px;"></div>
-    <div class="modal-btns" style="width:100%;"><button onclick="document.getElementById('modalInfo').classList.remove('on')">Закрыть</button></div>
-  </div>
+  <div class="box"><div class="drag-handle"></div><h3>Свойства</h3><div id="infoRows" style="width:100%;margin-bottom:16px;"></div><div class="modal-btns" style="width:100%;"><button onclick="document.getElementById('modalInfo').classList.remove('on')">Закрыть</button></div></div>
 </div>
 
 <header>
   <div class="top-row">
     <div class="crumb" id="crumb"></div>
-    <button class="btn-icon" id="btnSort" title="Сортировка">
-      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21 16-4 4-4-4"/><path d="M17 20V4"/><path d="m3 8 4-4 4 4"/><path d="M7 4v16"/></svg>
-    </button>
-    <button class="btn-icon" id="btnSettings" title="Настройки">
-      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-    </button>
+    <button class="btn-icon" id="btnSort" title="Сортировка"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21 16-4 4-4-4"/><path d="M17 20V4"/><path d="m3 8 4-4 4 4"/><path d="M7 4v16"/></svg></button>
+    <button class="btn-icon" id="btnSettings" title="Настройки"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
   </div>
   <div class="search-wrap">
     <div class="search" id="searchWrap">
-      <span class="ico">
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-      </span>
+      <span class="ico"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
       <input type="text" id="search" placeholder="Поиск файлов и тегов...">
-      <button class="clr" id="searchClear">
-        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      </button>
+      <button class="clr" id="searchClear"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
     </div>
-    <button class="btn-scope" id="btnSearchScope" title="Искать в текущей папке">
-      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-    </button>
+    <button class="btn-scope" id="btnSearchScope" title="Искать в текущей папке"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></button>
   </div>
 </header>
 
@@ -147,25 +87,14 @@
   </div>
 </div>
 
-<div id="grid"></div>
+<div id="gridWrap"><div id="grid"></div></div>
 
-<button id="btnUp" title="Наверх">
-  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
-</button>
+<button id="btnUp" title="Наверх"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg></button>
 
 <div id="bar">
-  <button id="btnAdd" class="primary">
-    <svg class="bi" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-    <span>Добавить</span>
-  </button>
-  <button id="btnFolder">
-    <svg class="bi" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-    <span>Папка</span>
-  </button>
-  <button id="btnEmptyTrash" class="danger">
-    <svg class="bi" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-    <span>Очистить</span>
-  </button>
+  <button id="btnAdd" class="primary"><svg class="bi" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg><span>Добавить</span></button>
+  <button id="btnFolder"><svg class="bi" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg><span>Папка</span></button>
+  <button id="btnEmptyTrash" class="danger"><svg class="bi" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg><span>Очистить</span></button>
 </div>
 
 <div id="ctxMenu">
@@ -174,21 +103,22 @@
     <div id="ctxSummaryText"></div>
     <div style="display:flex;align-items:center;">
       <button id="btnSelectAll">Выбрать всё</button>
-      <button id="ctxClose">
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      </button>
+      <button id="ctxClose"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
     </div>
   </div>
   <div class="ctx-grid" id="ctxRow1">
     <button class="ctx-item" id="ctxRename"><div class="ctx-icon"><svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg></div><span class="ctx-label">Имя</span></button>
     <button class="ctx-item" id="ctxMove"><div class="ctx-icon"><svg viewBox="0 0 24 24"><path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-6 12v-3H9v-2h5v-3l4 4-4 4z"/></svg></div><span class="ctx-label">В папку</span></button>
+    <button class="ctx-item" id="ctxCopy"><div class="ctx-icon"><svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg></div><span class="ctx-label">Копировать</span></button>
     <button class="ctx-item" id="ctxInfo"><div class="ctx-icon"><svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg></div><span class="ctx-label">Свойства</span></button>
-    <button class="ctx-item" id="ctxFav"><div class="ctx-icon"><svg viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg></div><span class="ctx-label">Избранное</span></button>
   </div>
   <div class="ctx-grid" id="ctxRow2">
+    <button class="ctx-item" id="ctxFav"><div class="ctx-icon"><svg viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg></div><span class="ctx-label">Избранное</span></button>
     <button class="ctx-item" id="ctxDownload"><div class="ctx-icon"><svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg></div><span class="ctx-label">Скачать</span></button>
     <button class="ctx-item" id="ctxCompress"><div class="ctx-icon"><svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg></div><span class="ctx-label">Сжать</span></button>
     <button class="ctx-item" id="ctxTag"><div class="ctx-icon"><svg viewBox="0 0 24 24"><path d="M17.63 5.84C17.27 5.33 16.67 5 16 5L5 5.01C3.9 5.01 3 5.9 3 7v10c0 1.1.9 1.99 2 1.99L16 19c.67 0 1.27-.33 1.63-.84L22 12l-4.37-6.16zM16 17H5V7h11l3.55 5L16 17z"/></svg></div><span class="ctx-label">Теги</span></button>
+  </div>
+  <div class="ctx-grid" id="ctxRow3" style="grid-template-columns:1fr;">
     <button class="ctx-item danger" id="ctxDel"><div class="ctx-icon"><svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg></div><span class="ctx-label">Удалить</span></button>
   </div>
   <div class="ctx-grid" id="ctxRowTrash" style="display:none; grid-template-columns: 1fr 1fr;">
@@ -202,36 +132,17 @@
 <div id="toast"></div>
 
 <div class="modal" id="modalEdit">
-  <div class="box">
-    <div class="drag-handle"></div>
-    <h3 id="meTitle">Название</h3>
-    <input type="text" id="meName" placeholder="Введите имя" autocomplete="off">
-    <div id="colorPickerWrap" style="display:none;">
-      <div style="font-size:13px;color:var(--mut);margin-bottom:12px;font-weight:600;text-align:center;">Цвет папки</div>
-      <div class="color-palette" id="colorPalette"></div>
-    </div>
-    <div class="modal-btns"><button id="meCancel">Отмена</button><button id="meOk" class="primary">Готово</button></div>
-  </div>
+  <div class="box"><div class="drag-handle"></div><h3 id="meTitle">Название</h3><input type="text" id="meName" placeholder="Введите имя" autocomplete="off"><div id="colorPickerWrap" style="display:none;"><div style="font-size:13px;color:var(--mut);margin-bottom:12px;font-weight:600;text-align:center;">Цвет папки</div><div class="color-palette" id="colorPalette"></div></div><div class="modal-btns"><button id="meCancel">Отмена</button><button id="meOk" class="primary">Готово</button></div></div>
 </div>
 
 <div class="modal" id="modalMove">
-  <div class="box">
-    <div class="drag-handle"></div>
-    <h3>Переместить в…</h3>
-    <div class="folder-list" id="moveList" style="flex:1;overflow-y:auto;max-height:40vh;margin-bottom:16px;border:1px solid var(--bd);border-radius:12px;background:var(--card);"></div>
-    <div class="modal-btns"><button id="mvCancel">Отмена</button><button id="mvOk" class="primary">Переместить</button></div>
-  </div>
+  <div class="box"><div class="drag-handle"></div><h3 id="mvTitle">Переместить в…</h3><div class="folder-list" id="moveList" style="flex:1;overflow-y:auto;max-height:40vh;margin-bottom:16px;border:1px solid var(--bd);border-radius:12px;background:var(--card);"></div><div class="modal-btns"><button id="mvCancel">Отмена</button><button id="mvOk" class="primary">Переместить</button></div></div>
 </div>
 
 <div class="modal" id="modalSort">
-  <div class="box">
-    <div class="drag-handle"></div>
-    <h3>Сортировка</h3>
+  <div class="box"><div class="drag-handle"></div><h3>Сортировка</h3>
     <div class="list-group" style="border:1px solid var(--bd);border-radius:16px;background:var(--card);overflow:hidden;">
-      <div class="list-item" data-sort="fav_first" onclick="setSort('fav_first')" style="padding:16px;cursor:pointer;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:10px;">
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#fbbf24;"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-        Сначала избранные
-      </div>
+      <div class="list-item" data-sort="fav_first" onclick="setSort('fav_first')" style="padding:16px;cursor:pointer;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:10px;"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#fbbf24;"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>Сначала избранные</div>
       <div class="list-item" data-sort="name_asc" onclick="setSort('name_asc')" style="padding:16px;cursor:pointer;border-bottom:1px solid var(--bd);">Имя (А-Я)</div>
       <div class="list-item" data-sort="name_desc" onclick="setSort('name_desc')" style="padding:16px;cursor:pointer;border-bottom:1px solid var(--bd);">Имя (Я-А)</div>
       <div class="list-item" data-sort="date_desc" onclick="setSort('date_desc')" style="padding:16px;cursor:pointer;border-bottom:1px solid var(--bd);">Сначала новые</div>
@@ -243,34 +154,18 @@
 </div>
 
 <div class="modal" id="modalDuplicates">
-  <div class="box">
-    <div class="drag-handle"></div>
-    <h3>Поиск дубликатов</h3>
-    <div id="dupResult" style="width:100%;"></div>
-    <div class="modal-btns"><button onclick="document.getElementById('modalDuplicates').classList.remove('on')">Закрыть</button><button id="btnDupDelete" class="primary" style="display:none;">Удалить лишние</button></div>
-  </div>
+  <div class="box"><div class="drag-handle"></div><h3>Поиск дубликатов</h3><div id="dupResult" style="width:100%;"></div><div class="modal-btns"><button onclick="document.getElementById('modalDuplicates').classList.remove('on')">Закрыть</button><button id="btnDupDelete" class="primary" style="display:none;">Удалить лишние</button></div></div>
 </div>
 
 <div class="modal" id="modalSettings">
   <div class="box">
     <div class="drag-handle"></div>
-    <div class="settings-header">
-      <div class="hdr-icon">
-        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-      </div>
-      <h3>Настройки</h3>
-    </div>
+    <div class="settings-header"><div class="hdr-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></div><h3>Настройки</h3></div>
 
     <div class="settings-group">
       <div class="settings-group-title">Внешний вид</div>
       <div class="settings-card">
-        <div class="settings-card-head">
-          <div class="settings-icon-box"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg></div>
-          <div>
-            <div class="settings-card-title">Тема оформления</div>
-            <div class="settings-card-sub">Цветовая схема интерфейса</div>
-          </div>
-        </div>
+        <div class="settings-card-head"><div class="settings-icon-box"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg></div><div><div class="settings-card-title">Тема оформления</div><div class="settings-card-sub">Цветовая схема интерфейса</div></div></div>
         <div class="theme-grid">
           <div class="theme-item" data-t="dark" onclick="setTheme('dark')"><div class="theme-preview"><div class="theme-color" style="background:#08090c"></div><div class="theme-color" style="background:#a78bfa"></div></div><span>Тёмная</span></div>
           <div class="theme-item" data-t="light" onclick="setTheme('light')"><div class="theme-preview"><div class="theme-color" style="background:#fafafa"></div><div class="theme-color" style="background:#7c3aed"></div></div><span>Светлая</span></div>
@@ -279,13 +174,7 @@
         </div>
       </div>
       <div class="settings-card">
-        <div class="settings-card-head with-divider">
-          <div class="settings-icon-box"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg></div>
-          <div>
-            <div class="settings-card-title">Сетка</div>
-            <div class="settings-card-sub">Количество колонок</div>
-          </div>
-        </div>
+        <div class="settings-card-head with-divider"><div class="settings-icon-box"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg></div><div><div class="settings-card-title">Сетка</div><div class="settings-card-sub">Количество колонок</div></div></div>
         <div class="pill-group">
           <div class="pill font-opt" data-c="repeat(2, 1fr)" onclick="setCols('repeat(2, 1fr)')" style="flex:1;text-align:center;justify-content:center;border-radius:var(--r-md);padding:14px 10px;">2</div>
           <div class="pill font-opt" data-c="repeat(3, 1fr)" onclick="setCols('repeat(3, 1fr)')" style="flex:1;text-align:center;justify-content:center;border-radius:var(--r-md);padding:14px 10px;">3</div>
@@ -293,216 +182,96 @@
         </div>
       </div>
       <div class="settings-card">
-        <div class="settings-row">
-          <span style="display:flex;align-items:center;gap:10px;">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--mut);"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="3"/></svg>
-            Превью папок
-          </span>
-          <div class="switch" id="swFolderPreview" onclick="toggleFolderPreview()"></div>
-        </div>
+        <div class="settings-row"><span style="display:flex;align-items:center;gap:10px;"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--mut);"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="3"/></svg>Превью папок</span><div class="switch" id="swFolderPreview" onclick="toggleFolderPreview()"></div></div>
       </div>
       <div class="settings-card">
-        <div class="settings-row">
-          <span style="display:flex;align-items:center;gap:10px;">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--mut);"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
-            Звуки и вибрация
-          </span>
-          <div class="switch" id="swSound" onclick="toggleSound()"></div>
-        </div>
+        <div class="settings-row"><span style="display:flex;align-items:center;gap:10px;"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--mut);"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>Звуки и вибрация</span><div class="switch" id="swSound" onclick="toggleSound()"></div></div>
       </div>
     </div>
 
     <div class="settings-group">
       <div class="settings-group-title">Медиатека</div>
       <div class="settings-card">
-        <div class="settings-card-head with-divider">
-          <div class="settings-icon-box"><svg viewBox="0 0 24 24"><polygon points="7 4 20 12 7 20 7 4"/></svg></div>
-          <div>
-            <div class="settings-card-title">Слайдшоу</div>
-            <div class="settings-card-sub">Интервал смены фото</div>
-          </div>
-          <span id="slideshowIntVal" style="margin-left:auto;font-size:14px;color:var(--acc);font-weight:700;">3 сек</span>
-        </div>
+        <div class="settings-card-head with-divider"><div class="settings-icon-box"><svg viewBox="0 0 24 24"><polygon points="7 4 20 12 7 20 7 4"/></svg></div><div><div class="settings-card-title">Слайдшоу</div><div class="settings-card-sub">Интервал смены фото</div></div><span id="slideshowIntVal" style="margin-left:auto;font-size:14px;color:var(--acc);font-weight:700;">3 сек</span></div>
         <input type="range" id="slideshowIntRange" min="1" max="15" value="3" step="1">
       </div>
       <div class="settings-card">
-        <div class="settings-card-head with-divider">
-          <div class="settings-icon-box"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></div>
-          <div>
-            <div class="settings-card-title">Корзина</div>
-            <div class="settings-card-sub">Автоочистка</div>
-          </div>
-        </div>
-        <div class="pill-group" id="trashAutoPills">
-          <div class="pill" data-val="0">Никогда</div>
-          <div class="pill" data-val="7">7 дней</div>
-          <div class="pill" data-val="30">30 дней</div>
-          <div class="pill" data-val="90">90 дней</div>
-        </div>
+        <div class="settings-card-head with-divider"><div class="settings-icon-box"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></div><div><div class="settings-card-title">Корзина</div><div class="settings-card-sub">Автоочистка</div></div></div>
+        <div class="pill-group" id="trashAutoPills"><div class="pill" data-val="0">Никогда</div><div class="pill" data-val="7">7 дней</div><div class="pill" data-val="30">30 дней</div><div class="pill" data-val="90">90 дней</div></div>
       </div>
     </div>
 
     <div class="settings-group">
       <div class="settings-group-title">Безопасность</div>
       <div class="settings-card">
-        <div class="settings-row" style="padding-top:0;">
-          <span style="display:flex;align-items:center;gap:10px;">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--mut);"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-            Защита паролем
-          </span>
-          <div class="switch" id="swLock" onclick="toggleLock()"></div>
-        </div>
+        <div class="settings-row" style="padding-top:0;"><span style="display:flex;align-items:center;gap:10px;"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--mut);"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>Защита паролем</span><div class="switch" id="swLock" onclick="toggleLock()"></div></div>
       </div>
       <div id="changePassWrap" style="display:none;margin-bottom:10px;">
         <input type="password" id="newPass" placeholder="Пароль (мин. 4 симв.)" inputmode="numeric" style="width:100%;background:var(--card);border:1px solid var(--bd);border-radius:var(--r-md);padding:14px;color:var(--txt);font-size:15px;font-family:inherit;outline:none;margin-bottom:8px;">
-        <button class="settings-btn primary" onclick="savePassword()">
-          <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
-          Установить пароль
-        </button>
+        <button class="settings-btn primary" onclick="savePassword()"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>Установить пароль</button>
       </div>
     </div>
 
     <div class="settings-group">
       <div class="settings-group-title">Инструменты</div>
       <div class="settings-card">
-        <button class="settings-btn" style="margin-top:0;" onclick="findDuplicates()">
-          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          Найти дубликаты
-        </button>
-        <button class="settings-btn" onclick="compactDB()">
-          <svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></svg>
-          Очистить мусор и сжать
-        </button>
+        <button class="settings-btn" style="margin-top:0;" onclick="findDuplicates()"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>Найти дубликаты</button>
+        <button class="settings-btn" onclick="compactDB()"><svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></svg>Очистить мусор и сжать</button>
       </div>
     </div>
 
     <div class="settings-group">
       <div class="settings-group-title">Память</div>
       <div class="settings-card">
-        <div class="settings-row" style="padding-top:0;">
-          <span>Медиафайлы</span>
-          <span id="storageFilesSize" style="font-weight:700;color:var(--acc);">...</span>
-        </div>
-        <div class="settings-row">
-          <span>Занято в системе</span>
-          <span id="storageUsage" style="font-weight:700;">...</span>
-        </div>
-        <div class="settings-row">
-          <span>Свободно</span>
-          <span id="storageFree" style="font-weight:700;color:#34d399;">...</span>
-        </div>
-        <div class="settings-row">
-          <span>Постоянное хранилище</span>
-          <span id="storagePersist" style="font-weight:700;">...</span>
-        </div>
+        <div class="settings-row" style="padding-top:0;"><span>Медиафайлы</span><span id="storageFilesSize" style="font-weight:700;color:var(--acc);">...</span></div>
+        <div class="settings-row"><span>Занято в системе</span><span id="storageUsage" style="font-weight:700;">...</span></div>
+        <div class="settings-row"><span>Свободно</span><span id="storageFree" style="font-weight:700;color:#34d399;">...</span></div>
+        <div class="settings-row"><span>Постоянное хранилище</span><span id="storagePersist" style="font-weight:700;">...</span></div>
       </div>
     </div>
 
     <div class="settings-group">
       <div class="settings-group-title">Статистика</div>
       <div class="settings-card">
-        <div class="settings-row" style="padding-top:0;">
-          <span>Всего файлов</span>
-          <span id="statTotalFiles" style="font-weight:700;color:var(--acc);">0</span>
-        </div>
-        <div class="settings-row">
-          <span>Фото / Видео</span>
-          <span id="statMediaFiles" style="font-weight:700;">0 / 0</span>
-        </div>
-        <div class="settings-row">
-          <span>Папок</span>
-          <span id="statFolders" style="font-weight:700;">0</span>
-        </div>
-        <div class="settings-row">
-          <span>В избранном</span>
-          <span id="statFavorites" style="font-weight:700;color:#fbbf24;">0</span>
-        </div>
-        <div class="settings-row">
-          <span>В корзине</span>
-          <span id="statTrash" style="font-weight:700;color:var(--danger);">0</span>
-        </div>
+        <div class="settings-row" style="padding-top:0;"><span>Всего файлов</span><span id="statTotalFiles" style="font-weight:700;color:var(--acc);">0</span></div>
+        <div class="settings-row"><span>Фото / Видео</span><span id="statMediaFiles" style="font-weight:700;">0 / 0</span></div>
+        <div class="settings-row"><span>Папок</span><span id="statFolders" style="font-weight:700;">0</span></div>
+        <div class="settings-row"><span>В избранном</span><span id="statFavorites" style="font-weight:700;color:#fbbf24;">0</span></div>
+        <div class="settings-row"><span>В корзине</span><span id="statTrash" style="font-weight:700;color:var(--danger);">0</span></div>
       </div>
     </div>
 
     <div class="settings-group">
       <div class="settings-group-title">Импорт медиа</div>
       <div class="settings-card">
-        <div class="settings-card-head with-divider">
-          <div class="settings-icon-box green">
-            <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          </div>
-          <div>
-            <div class="settings-card-title">Из ZIP-архива</div>
-            <div class="settings-card-sub">Медиа или полная копия</div>
-          </div>
-        </div>
-        <div style="font-size:12px;color:var(--mut);line-height:1.5;margin-bottom:10px;">
-          Поддерживаются обычные архивы с фото/видео (папки сохранятся) и полные резервные копии приложения. Дубликаты пропускаются автоматически.
-        </div>
-        <button class="settings-btn" style="margin-top:0;" onclick="document.getElementById('archiveImportFile').click()">
-          <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          Выбрать ZIP-архив
-        </button>
+        <div class="settings-card-head with-divider"><div class="settings-icon-box green"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></div><div><div class="settings-card-title">Из ZIP-архива</div><div class="settings-card-sub">Медиа или полная копия</div></div></div>
+        <div style="font-size:12px;color:var(--mut);line-height:1.5;margin-bottom:10px;">Поддерживаются обычные архивы с фото/видео (папки сохранятся) и полные резервные копии приложения. Дубликаты пропускаются автоматически.</div>
+        <button class="settings-btn" style="margin-top:0;" onclick="document.getElementById('archiveImportFile').click()"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Выбрать ZIP-архив</button>
       </div>
     </div>
 
     <div class="settings-group">
       <div class="settings-group-title">Экспорт медиа</div>
       <div class="settings-card">
-        <div class="settings-card-head with-divider">
-          <div class="settings-icon-box">
-            <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-          </div>
-          <div>
-            <div class="settings-card-title">Все данные</div>
-            <div class="settings-card-sub">Файлы, папки и настройки</div>
-          </div>
-        </div>
-        <div style="font-size:12px;color:var(--mut);line-height:1.5;margin-bottom:10px;">
-          Создает ZIP-архив со всеми файлами, папками, тегами и настройками. Используйте для переноса на другое устройство.
-        </div>
-        <button class="settings-btn" style="margin-top:0;" onclick="exportAllData()">
-          <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-          Экспортировать всё
-        </button>
+        <div class="settings-card-head with-divider"><div class="settings-icon-box"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></div><div><div class="settings-card-title">Все данные</div><div class="settings-card-sub">Файлы, папки и настройки</div></div></div>
+        <div style="font-size:12px;color:var(--mut);line-height:1.5;margin-bottom:10px;">Создает ZIP-архив со всеми файлами, папками, тегами и настройками. Используйте для переноса на другое устройство.</div>
+        <button class="settings-btn" style="margin-top:0;" onclick="exportAllData()"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Экспортировать всё</button>
       </div>
     </div>
 
     <div class="settings-group">
       <div class="settings-group-title">О приложении</div>
       <div class="settings-card">
-        <div class="settings-card-head with-divider">
-          <div class="app-logo-badge">
-            <svg viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2" ry="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/><circle cx="12" cy="16" r="1.2" fill="currentColor" stroke="none"/></svg>
-          </div>
-          <div>
-            <div class="settings-card-title">Krypta</div>
-            <div class="settings-card-sub">Локальная медиатека</div>
-          </div>
-        </div>
-        <div class="settings-row">
-          <span>Версия</span>
-          <span class="version-badge">v1.0.4</span>
-        </div>
-        <div class="settings-row" style="border-bottom:none;">
-          <span>Режим</span>
-          <span style="font-weight:600;color:var(--mut);">Offline · OPFS</span>
-        </div>
-        <a href="https://github.com/Ravi8O8/Krypta" onclick="openGithub(event)" rel="noopener noreferrer" class="settings-btn github-btn" style="margin-top:12px;">
-          <svg class="github-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
-          <span>Открыть на GitHub</span>
-        </a>
+        <div class="settings-card-head with-divider"><div class="app-logo-badge"><svg viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2" ry="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/><circle cx="12" cy="16" r="1.2" fill="currentColor" stroke="none"/></svg></div><div><div class="settings-card-title">Krypta</div><div class="settings-card-sub">Локальная медиатека</div></div></div>
+        <div class="settings-row"><span>Версия</span><span class="version-badge">v1.0.4</span></div>
+        <div class="settings-row" style="border-bottom:none;"><span>Режим</span><span style="font-weight:600;color:var(--mut);">Offline · OPFS</span></div>
+        <a href="https://github.com/Ravi8O8/Krypta" onclick="openGithub(event)" rel="noopener noreferrer" class="settings-btn github-btn" style="margin-top:12px;"><svg class="github-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg><span>Открыть на GitHub</span></a>
       </div>
     </div>
 
     <div class="settings-group">
       <div class="settings-group-title">Опасная зона</div>
-      <div class="settings-card">
-        <button class="settings-btn danger" style="margin-top:0;" onclick="hardResetDB()">
-          <svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-          Полный сброс
-        </button>
-      </div>
+      <div class="settings-card"><button class="settings-btn danger" style="margin-top:0;" onclick="hardResetDB()"><svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>Полный сброс</button></div>
     </div>
 
     <div class="modal-btns" style="margin-top:20px;"><button onclick="document.getElementById('modalSettings').classList.remove('on')">Закрыть</button></div>
@@ -510,48 +279,23 @@
 </div>
 
 <div class="modal" id="modalTags">
-  <div class="box">
-    <div class="drag-handle"></div>
-    <h3>Теги (<span id="tagCount">0</span> файлов)</h3>
-    <div style="display:flex; gap:8px; margin-bottom:16px;">
-      <input type="text" id="tagInput" placeholder="Новый тег..." style="margin-bottom:0;">
-      <button id="tagAddBtn" class="primary" style="width:auto; padding:0 20px; border-radius:12px; font-size:20px; display:flex;align-items:center;justify-content:center;">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-      </button>
-    </div>
+  <div class="box"><div class="drag-handle"></div><h3>Теги (<span id="tagCount">0</span> файлов)</h3>
+    <div style="display:flex; gap:8px; margin-bottom:16px;"><input type="text" id="tagInput" placeholder="Новый тег..." style="margin-bottom:0;"><button id="tagAddBtn" class="primary" style="width:auto; padding:0 20px; border-radius:12px; font-size:20px; display:flex;align-items:center;justify-content:center;"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button></div>
     <div id="tagList" style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:20px; min-height:40px;"></div>
     <div class="modal-btns"><button id="tagClose" class="primary">Готово</button></div>
   </div>
 </div>
 
 <div class="modal custom-confirm" id="modalConfirm">
-  <div class="box">
-    <div class="drag-handle"></div>
-    <h3 id="confirmTitle" style="margin-bottom: 12px;">Подтверждение</h3>
-    <div id="confirmText" style="font-size: 14px; color: var(--txt); text-align: center; margin-bottom: 24px; line-height: 1.5;"></div>
-    <div class="modal-btns" style="margin-top: 0;">
-      <button id="confirmCancel">Отмена</button>
-      <button id="confirmOk" class="primary">ОК</button>
-    </div>
-  </div>
+  <div class="box"><div class="drag-handle"></div><h3 id="confirmTitle" style="margin-bottom: 12px;">Подтверждение</h3><div id="confirmText" style="font-size: 14px; color: var(--txt); text-align: center; margin-bottom: 24px; line-height: 1.5;"></div><div class="modal-btns" style="margin-top: 0;"><button id="confirmCancel">Отмена</button><button id="confirmOk" class="primary">ОК</button></div></div>
 </div>
 
 <div class="modal" id="modalCompressResult">
-  <div class="box">
-    <div class="drag-handle"></div>
-    <h3>Сжатие завершено</h3>
-    <div id="compressSummary" style="width:100%;margin-bottom:16px;text-align:center;"></div>
-    <div id="compressList" style="width:100%;max-height:45vh;overflow-y:auto;margin-bottom:16px;border:1px solid var(--bd);border-radius:12px;padding:8px;background:var(--card);"></div>
-    <div class="modal-btns" style="width:100%;"><button id="btnDoneCompress" class="primary">Отлично</button></div>
-  </div>
+  <div class="box"><div class="drag-handle"></div><h3>Сжатие завершено</h3><div id="compressSummary" style="width:100%;margin-bottom:16px;text-align:center;"></div><div id="compressList" style="width:100%;max-height:45vh;overflow-y:auto;margin-bottom:16px;border:1px solid var(--bd);border-radius:12px;padding:8px;background:var(--card);"></div><div class="modal-btns" style="width:100%;"><button id="btnDoneCompress" class="primary">Отлично</button></div></div>
 </div>
 
 <div id="customKeyboard" class="ck">
-  <div class="ck-top">
-    <button class="ck-topbtn" id="ckLangBtn">РУ</button>
-    <button class="ck-topbtn" id="ckModeBtn">123</button>
-    <button class="ck-topbtn ck-done" id="ckDoneBtn">Готово</button>
-  </div>
+  <div class="ck-top"><button class="ck-topbtn" id="ckLangBtn">РУ</button><button class="ck-topbtn" id="ckModeBtn">123</button><button class="ck-topbtn ck-done" id="ckDoneBtn">Готово</button></div>
   <div class="ck-rows" id="ckRows"></div>
 </div>
 
