@@ -2997,7 +2997,6 @@ window.importFromArchive = async (input) => {
   await nextMacrotask();
 
   try {
-    // v1.0.4.4: один большой arrayBuffer (как в v1.0.3), БЕЗ slice() на каждый файл
     let entries;
     try {
       entries = await parseZip(file);
@@ -3016,7 +3015,6 @@ window.importFromArchive = async (input) => {
       return;
     }
 
-    // === Восстановление полной резервной копии ===
     let metadataEntry = null;
     for (const e of entries) {
       if (e.name.endsWith('metadata.json')) { metadataEntry = e; break; }
@@ -3054,9 +3052,11 @@ window.importFromArchive = async (input) => {
         } catch(e) { console.warn('BG restore failed', e); }
       }
 
-      // Файлы — из памяти, БЕЗ slice с диска
       const totalFiles = metadata.files.length;
       let i = 0;
+      let bytesRestored = 0;
+      let lastYieldRestore = Date.now();
+
       for (const f of metadata.files) {
         try {
           const mainEntry = entryMap.get(basePath + `files/${f.fileId}`);
@@ -3073,6 +3073,7 @@ window.importFromArchive = async (input) => {
               }
             }
             await wr.close();
+            bytesRestored += d.length;
           }
           const thumbEntry = entryMap.get(basePath + `thumbs/${f.fileId}`);
           if (thumbEntry && thumbEntry.data && rootDir) {
@@ -3080,17 +3081,21 @@ window.importFromArchive = async (input) => {
             const wr = await fh.createWritable();
             await wr.write(new Blob([thumbEntry.data]));
             await wr.close();
+            bytesRestored += thumbEntry.data.length;
           }
         } catch (e) { console.warn('Restore failed', f.name, e); }
         i++;
-        if (i % 10 === 0) {
+        
+        const nowR = Date.now();
+        if (nowR - lastYieldRestore > 150 || i === totalFiles) {
+          lastYieldRestore = nowR;
           showProgress('Восстановление', 10 + Math.round((i / totalFiles) * 80), f.name || `Файл ${i}`, `${i}/${totalFiles}`);
           await nextMacrotask();
         }
       }
-
-      showProgress('Восстановление', 92, 'База данных...', '');
-      await nextMacrotask();
+      
+      const restoreSpeed = (bytesRestored / 1048576) / ((performance.now() - t0) / 1000);
+      console.log(`Восстановление: ${restoreSpeed.toFixed(1)} МБ/с`);
 
       const t1 = db.transaction(SF, 'readwrite'); t1.objectStore(SF).clear();
       await new Promise((res, rej) => { t1.oncomplete = res; t1.onerror = e => rej(e.target.error); });
