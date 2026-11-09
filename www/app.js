@@ -101,6 +101,7 @@ async function initStorage() {
     try { await Filesystem.mkdir({ path: 'Krypta/files', directory: 'DOCUMENTS', recursive: true }); } catch(e) {}
     try { await Filesystem.mkdir({ path: 'Krypta/thumbs', directory: 'DOCUMENTS', recursive: true }); } catch(e) {}
   }
+  // rootDir нужен и на native — для миграции старых файлов из OPFS
   if (navigator.storage && navigator.storage.getDirectory) {
     try {
       rootDir = await navigator.storage.getDirectory();
@@ -177,7 +178,7 @@ async function migrateOPFSToNative() {
       f.name || `Файл ${i+1}`,
       `✓${migrated} · ⏭${skipped} · ✗${failed}`
     );
-    if (i % 5 === 0) await new Promise(r => setTimeout(r, 20));
+    if (i % 5 === 0) await nextMacrotask();
   }
 
   try {
@@ -459,6 +460,7 @@ async function checkFreeSpace(requiredBytes, label) {
     const usage = est.usage || 0;
     if (quota <= 0) return true;
     const free = quota - usage;
+    // На native файлы лежат в Documents, квота WebView не показательна — пропускаем
     if (nativeStorage) return true;
     if (free < requiredBytes * 1.15) {
       const freeMB = (free / 1048576).toFixed(0);
@@ -519,7 +521,6 @@ function showConfirm(title, text, okText = 'ОК', cancelText = 'Отмена') 
     modal.classList.add('on');
   });
 }
-
 const CRC_TABLE = (() => {
   const t = new Uint32Array(256);
   for (let i = 0; i < 256; i++) { let c=i; for (let k=0;k<8;k++) c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1); t[i]=c>>>0; }
@@ -555,7 +556,7 @@ async function createOutputStream(filename) {
       try { await Filesystem.deleteFile({ path, directory }); } catch(e) {}
       let buffer = [];
       let bufferSize = 0;
-      const TARGET = 1024 * 1024;
+      const TARGET = 4 * 1024 * 1024;
       let isFirst = true;
       let writeChain = Promise.resolve();
       let bytesWritten = 0;
@@ -569,7 +570,6 @@ async function createOutputStream(filename) {
         if (aborted) return;
         if (isFirst) { await Filesystem.writeFile({ path, data: base64, directory, recursive: true }); isFirst = false; }
         else { await Filesystem.appendFile({ path, data: base64, directory }); }
-        await new Promise(r => setTimeout(r, 0));
       };
       return {
         type: 'capacitor',
@@ -892,6 +892,7 @@ async function parseZipStreaming(file) {
   return { file, entries };
 }
 
+// extractEntryToOPFS с нативной веткой
 async function extractEntryToOPFS(zipInfo, entry, fileId) {
   if (nativeStorage) return extractEntryToNative(zipInfo, entry, fileId);
 
@@ -968,25 +969,25 @@ async function extractEntryToOPFS(zipInfo, entry, fileId) {
   }
 }
 
+// Нативный аналог для Capacitor
 async function extractEntryToNative(zipInfo, entry, fileId) {
   const { Filesystem } = window.Capacitor.Plugins;
   const path = 'Krypta/files/' + fileId;
   const lhBuf = new Uint8Array(await zipInfo.file.slice(entry.localOffset, entry.localOffset + 30).arrayBuffer());
   const lhDV = new DataView(lhBuf.buffer);
   const dataStart = entry.localOffset + 30 + lhDV.getUint16(26, true) + lhDV.getUint16(28, true);
-  
-  const CHUNK = 1024 * 1024; 
+  const CHUNK = 4 * 1024 * 1024;
   let isFirst = true;
+  let lastYield = Date.now();
 
-  const writeChunk = async (uint8array) => {
-    const base64 = await blobToBase64(new Blob([uint8array]));
+  const writeChunk = async (bytes) => {
+    const base64 = await blobToBase64(new Blob([bytes]));
     if (isFirst) {
       await Filesystem.writeFile({ path, data: base64, directory: 'DOCUMENTS', recursive: true });
       isFirst = false;
     } else {
       await Filesystem.appendFile({ path, data: base64, directory: 'DOCUMENTS' });
     }
-    await new Promise(r => setTimeout(r, 25)); 
   };
 
   try {
@@ -997,7 +998,7 @@ async function extractEntryToNative(zipInfo, entry, fileId) {
         const buf = new Uint8Array(await zipInfo.file.slice(dataStart + off, dataStart + end).arrayBuffer());
         await writeChunk(buf);
         off = end;
-        await nextMacrotask();
+        if (Date.now() - lastYield > 150) { await nextMacrotask(); lastYield = Date.now(); }
       }
     } else if (entry.method === 8) {
       const ds = new DecompressionStream('deflate-raw');
@@ -1011,11 +1012,10 @@ async function extractEntryToNative(zipInfo, entry, fileId) {
           const buf = new Uint8Array(await zipInfo.file.slice(offset, chunkEnd).arrayBuffer());
           await dsWriter.write(buf);
           offset = chunkEnd;
-          await nextMacrotask();
+          if (Date.now() - lastYield > 150) { await nextMacrotask(); lastYield = Date.now(); }
         }
         await dsWriter.close();
       })();
-      
       let parts = [], partsSize = 0;
       const flushParts = async () => {
         if (!partsSize) return;
@@ -1025,7 +1025,6 @@ async function extractEntryToNative(zipInfo, entry, fileId) {
         await writeChunk(merged);
         parts = []; partsSize = 0;
       };
-      
       try {
         while (true) {
           const { done, value } = await dsReader.read();
@@ -1033,7 +1032,7 @@ async function extractEntryToNative(zipInfo, entry, fileId) {
           parts.push(value); partsSize += value.length;
           if (partsSize >= CHUNK) {
             await flushParts();
-            await nextMacrotask();
+            if (Date.now() - lastYield > 150) { await nextMacrotask(); lastYield = Date.now(); }
           }
         }
         await flushParts();
@@ -1226,6 +1225,7 @@ async function generateVideoThumbnail(file, maxSize = 300) {
   });
 }
 
+// ===== Миниатюры: нативные версии =====
 async function saveThumb(fileId, blob) {
   if (!blob) return;
   if (nativeStorage) {
@@ -1292,32 +1292,16 @@ async function processBgThumbQueue() {
     try {
       const existing = await getThumb(f);
       if (!existing && (f.type === 'image' || f.type === 'video')) {
-        const file = await getFileData(f);
+        const file = await getFromOPFS(f.fileId) || f.blob;
         if (file) {
           const thumb = f.type === 'image'
             ? await generateImageThumbnail(file)
             : await generateVideoThumbnail(file);
-          if (thumb) {
-            await saveThumb(f.fileId, thumb);
-            const tile = document.querySelector(`.tile[data-file-id="${f.id}"]`);
-            if (tile) {
-              const img = tile.querySelector('.tile-img');
-              if (img) {
-                const url = URL.createObjectURL(thumb);
-                img.src = url;
-                img.onload = () => img.classList.add('loaded');
-                if (tile._blobUrl) URL.revokeObjectURL(tile._blobUrl);
-                tile._blobUrl = url;
-                const skel = tile.querySelector('.skeleton');
-                if (skel) skel.remove();
-                tile.classList.remove('broken');
-              }
-            }
-          }
+          if (thumb) await saveThumb(f.fileId, thumb);
         }
       }
     } catch(e) {}
-    await new Promise(r => setTimeout(r, 100));
+    await nextMacrotask();
   }
   bgThumbRunning = false;
 }
@@ -1485,24 +1469,17 @@ document.querySelectorAll('#trashAutoPills .pill').forEach(p => {
   p.onclick = () => setTrashAutoDays(Number(p.dataset.val));
 });
 
+// getFromOPFS / deleteFromOPFS — нативные версии
 async function getFromOPFS(fileId) {
   if (nativeStorage) {
     const { Filesystem } = window.Capacitor.Plugins;
     try {
-      const uri = await Filesystem.getUri({ path: 'Krypta/files/' + fileId, directory: 'DOCUMENTS' });
+      const uri = await Filesystem.getUri({
+        path: 'Krypta/files/' + fileId,
+        directory: 'DOCUMENTS'
+      });
       const res = await fetch(Capacitor.convertFileSrc(uri.uri));
-      if (res.ok) {
-        const blob = await res.blob();
-        if (blob.size > 0) return blob;
-      }
-    } catch(e) { console.warn('fetch failed', e); }
-
-    try {
-      const result = await Filesystem.readFile({ path: 'Krypta/files/' + fileId, directory: 'DOCUMENTS' });
-      const binary = atob(result.data);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-      return new Blob([bytes]);
+      return await res.blob();
     } catch(e) { return null; }
   }
   if (!rootDir) return null;
@@ -1557,13 +1534,14 @@ async function calculateHash(file) {
   }
 }
 
+// saveToOPFSChunked — нативная версия + OPFS fallback
 async function saveToOPFSChunked(fileId, file) {
   if (nativeStorage) {
     const { Filesystem } = window.Capacitor.Plugins;
     const path = 'Krypta/files/' + fileId;
     try { await Filesystem.deleteFile({ path, directory: 'DOCUMENTS' }); } catch(e) {}
     try {
-      const CHUNK = 1024 * 1024;
+      const CHUNK = 4 * 1024 * 1024;
       const total = file.size;
       let offset = 0;
       let isFirst = true;
@@ -1571,8 +1549,7 @@ async function saveToOPFSChunked(fileId, file) {
       while (offset < total) {
         if (isAppInBackground) { await new Promise(r => setTimeout(r, 1000)); continue; }
         const end = Math.min(offset + CHUNK, total);
-        const chunkBlob = file.slice(offset, end);
-        const base64 = await blobToBase64(chunkBlob);
+        const base64 = await blobToBase64(file.slice(offset, end));
         if (isFirst) {
           await Filesystem.writeFile({ path, data: base64, directory: 'DOCUMENTS', recursive: true });
           isFirst = false;
@@ -1587,7 +1564,6 @@ async function saveToOPFSChunked(fileId, file) {
             `${(offset/1048576).toFixed(1)} / ${(total/1048576).toFixed(1)} МБ`);
           await nextMacrotask();
         }
-        await new Promise(r => setTimeout(r, 25)); 
       }
       return true;
     } catch(e) { console.error('Native save error', e); return false; }
@@ -1720,7 +1696,6 @@ function addFolder(name, parent, color) {
   }));
 }
 function detectType(file) {
-  if (!file) return 'other';
   const mime = (file.type||'').toLowerCase(), name = (file.name||'').toLowerCase();
   const ext = (name.match(/\.([a-z0-9]+)$/)||[])[1]||'';
   if(mime.startsWith('image/') || /^(jpg|jpeg|png|gif|webp|bmp|heic|heif|avif|svg)$/.test(ext)) return 'image';
@@ -1975,6 +1950,7 @@ window.openDupGallery = async (fileIds, clickedId) => {
   renderViewer();
 };
 
+// compactDB с нативной очисткой
 async function compactDB() {
   if (!await showConfirm('Сжатие базы', 'Очистить корзину, удалить "осиротевшие" файлы и пересобрать базу?')) return;
   await acquireWakeLock();
@@ -2027,6 +2003,7 @@ async function compactDB() {
 
     const validFileIds = new Set(files.map(f => f.fileId));
 
+    // Native cleanup
     if (nativeStorage) {
       showProgress('Очистка', 40, 'Удаление лишних файлов...', '');
       const { Filesystem } = window.Capacitor.Plugins;
@@ -2047,6 +2024,7 @@ async function compactDB() {
       } catch(e) { console.warn('Native cleanup err', e); }
     }
 
+    // OPFS legacy cleanup
     if (rootDir) {
       try {
         const toRemove = [];
@@ -2178,13 +2156,25 @@ async function loadTileImage(tileEl) {
     const skelEl = tileEl.querySelector('.skeleton');
     let thumb = await getThumb(f);
     let hasFile = !!thumb;
-    
-    if (!thumb) { 
-      if (skelEl) skelEl.remove(); 
-      if (f.type === 'image' || f.type === 'video') queueBgThumb(f);
-      return; 
+    if (!thumb && f.type === 'video' && !failedVideoThumbs.has(f.fileId)) {
+      const file = await getFileData(f);
+      if (file) {
+        hasFile = true;
+        thumb = await generateVideoThumbnail(file);
+        if (thumb) await saveThumb(f.fileId, thumb);
+        else failedVideoThumbs.add(f.fileId);
+      }
     }
-    
+    if (!thumb && f.type === 'image') {
+      const file = await getFileData(f);
+      if (file) { thumb = file; hasFile = true; queueBgThumb(f); }
+    }
+    if (!hasFile && (f.type === 'image' || f.type === 'video')) {
+      tileEl.classList.add('broken');
+      if (skelEl) skelEl.remove();
+      return;
+    }
+    if (!thumb) { if (skelEl) skelEl.remove(); return; }
     if (!tileEl.isConnected) return;
     const url = URL.createObjectURL(thumb);
     tileEl._blobUrl = url;
@@ -2230,7 +2220,7 @@ async function blobToBase64(blob) {
 
 async function writeBlobToCacheChunked(blob, cachePath, onProgress) {
   const { Filesystem } = window.Capacitor.Plugins;
-  const CHUNK_SIZE = 1024 * 1024;
+  const CHUNK_SIZE = 4 * 1024 * 1024;
   const total = blob.size;
   try { await Filesystem.deleteFile({ path: cachePath, directory: 'CACHE' }); } catch (e) {}
   let offset = 0;
@@ -2247,7 +2237,7 @@ async function writeBlobToCacheChunked(blob, cachePath, onProgress) {
     }
     offset = end;
     if (onProgress) onProgress(offset / total);
-    await new Promise(r => setTimeout(r, 25));
+    await new Promise(r => setTimeout(r, 0));
   }
 }
 
@@ -2365,6 +2355,7 @@ function scheduleSlideshowNext(f) {
   }, slideshowInterval);
 }
 
+// renderViewer — с нативным convertFileSrc
 async function renderViewer() {
   const myToken = ++viewerToken;
   const f = galleryFiles[currentGalleryIndex]; if(!f) return;
@@ -2449,17 +2440,6 @@ async function renderViewer() {
   container.className = 'swipe-container'; container.id = 'swipe';
   if(f.type === 'image') {
     const img = document.createElement('img'); img.src = url; container.appendChild(img);
-    img.onerror = async () => {
-      const fileBlob = await getFromOPFS(f.fileId);
-      if (fileBlob) {
-        const blobUrl = URL.createObjectURL(fileBlob);
-        img.src = blobUrl;
-        modal.dataset.url = blobUrl;
-        modal.dataset.isBlob = '1';
-      } else {
-        content.innerHTML = `<div style="color:#fff;text-align:center;padding:20px;">Не удалось загрузить файл</div>`;
-      }
-    };
     if (slideshowActive) scheduleSlideshowNext(f);
   } else {
     const video = document.createElement('video');
@@ -2695,6 +2675,7 @@ async function refresh() {
   renderGrid(true);
   updateStorageInfo(files);
 }
+// updateStorageInfo — с quotaMB вместо freeBytes
 async function updateStorageInfo(files = null) {
   try {
     if (!files) files = await getAllFiles();
@@ -3294,6 +3275,7 @@ async function compressFiles(ids, isAutoBatch = false) {
         if (!blob || blob.size >= f.size) { processed++; continue; }
         const oldSize = f.size;
         const newSize = blob.size;
+        // перезапись через универсальный слой
         if (nativeStorage) {
           const { Filesystem } = window.Capacitor.Plugins;
           try {
@@ -3906,7 +3888,6 @@ window.importFromArchive = async (input) => {
           await new Promise((res, rej) => { t6.oncomplete = res; t6.onerror = e => rej(e.target.error); });
         }
 
-        await setSetting('opfsMigratedToNative', true);
         settingsCache = null;
         hideProgress();
         toast('Готово', `Восстановлено ${totalFiles} файлов. Перезагрузка...`);
@@ -4003,13 +3984,19 @@ window.importFromArchive = async (input) => {
 
           let hash = '';
           let isDuplicate = false;
+          if (sizesInDb.has(entry.uncompSize)) {
+            const fileObj = await getFromOPFS(fileId);
+            try { hash = await calculateHash(fileObj); } catch(e) {}
+            if (hash && existingHashes.has(hash)) isDuplicate = true;
+          }
 
           if (isDuplicate) {
             await deleteFromOPFS(fileId);
             skipped++;
           } else {
-            const type = mime.startsWith('image/') ? 'image' : 'video';
-            const exifDate = null; 
+            const fileObj = await getFromOPFS(fileId);
+            const type = detectType(fileObj);
+            const exifDate = (type === 'image' && fileObj) ? await extractExifDate(fileObj) : null;
             const record = {
               fileId, name: fileName, type, mime,
               size: entry.uncompSize, date: exifDate || Date.now(),
@@ -4019,6 +4006,7 @@ window.importFromArchive = async (input) => {
             };
             pendingRecords.push(record);
             importedFiles.push(record);
+            if (hash && !hash.startsWith('unique_')) existingHashes.add(hash);
             sizesInDb.add(entry.uncompSize);
             imported++;
             if (pendingRecords.length >= FLUSH_SIZE) await flushPending();
@@ -4147,7 +4135,6 @@ window.importFromArchive = async (input) => {
         await new Promise((res, rej) => { t6.oncomplete = res; t6.onerror = e => rej(e.target.error); });
       }
 
-      await setSetting('opfsMigratedToNative', true);
       settingsCache = null;
       hideProgress();
       toast('Готово', `Восстановлено ${totalFiles} файлов. Перезагрузка...`);
@@ -4239,15 +4226,16 @@ window.importFromArchive = async (input) => {
 
         let hash = '';
         let isDuplicate = false;
-        if (false) {
+        if (sizesInDb.has(entry.data.length)) {
           try { hash = await calculateHash(fileObj); } catch(e) {}
+          if (hash && existingHashes.has(hash)) isDuplicate = true;
         }
 
         if (isDuplicate) { skipped++; }
         else {
           const fileId = generateId();
-          const type = mime.startsWith('image/') ? 'image' : 'video';
-          const exifDate = null; 
+          const type = detectType(fileObj);
+          const exifDate = (type === 'image') ? await extractExifDate(fileObj) : null;
           const record = {
             fileId, name: fileName, type, mime,
             size: entry.data.length, date: exifDate || Date.now(),
@@ -4262,6 +4250,7 @@ window.importFromArchive = async (input) => {
             else {
               pendingRecords.push(record);
               importedFiles.push(record);
+              if (hash && !hash.startsWith('unique_')) existingHashes.add(hash);
               sizesInDb.add(entry.data.length);
               imported++;
               if (pendingRecords.length >= FLUSH_SIZE) await flushBatch();
@@ -4270,6 +4259,7 @@ window.importFromArchive = async (input) => {
             record.blob = fileObj;
             pendingRecords.push(record);
             importedFiles.push(record);
+            if (hash && !hash.startsWith('unique_')) existingHashes.add(hash);
             sizesInDb.add(entry.data.length);
             imported++;
             if (pendingRecords.length >= FLUSH_SIZE) await flushBatch();
