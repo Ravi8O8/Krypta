@@ -3168,14 +3168,100 @@ window.importFromArchive = async (input) => {
     }
 
     if (isStreamingMode) {
+      // Проверяем, есть ли в архиве файл metadata.json (признак полной резервной копии)
       hideProgress();
+      zipInfo = await parseZipStreaming(file);
+      let metadataEntry = null;
+      for (const e of zipInfo.entries) {
+        if (e.name.endsWith('metadata.json')) { metadataEntry = e; break; }
+      }
+
+      if (metadataEntry) {
+        // ЭТО ПОЛНАЯ РЕЗЕРВНАЯ КОПИЯ (ПОТОКОВЫЙ РЕЖИМ)
+        showProgress('Восстановление', 0, 'Чтение метаданных...', '');
+        const metaData = await extractEntryToBuffer(zipInfo, metadataEntry);
+        const metadata = JSON.parse(new TextDecoder().decode(metaData));
+        
+        hideProgress();
+        if (!await showConfirm('Восстановление', 'Обнаружена полная резервная копия.<br><br>Все текущие данные будут <b>заменены</b>. Продолжить?', 'Восстановить', 'Отмена')) return;
+
+        await acquireWakeLock();
+        const basePath = metadataEntry.name.substring(0, metadataEntry.name.length - 'metadata.json'.length);
+        const entryMap = new Map(zipInfo.entries.map(e => [e.name, e]));
+
+        const bgEntry = entryMap.get(basePath + 'background.jpg');
+        if (bgEntry && rootDir) {
+          try {
+            const fh = await rootDir.getFileHandle(BG_FILE_ID, { create: true });
+            const wr = await fh.createWritable();
+            const bgData = await extractEntryToBuffer(zipInfo, bgEntry);
+            await wr.write(new Blob([bgData]));
+            await wr.close();
+          } catch(e) { console.warn('BG restore failed', e); }
+        }
+
+        const totalFiles = metadata.files.length;
+        let i = 0;
+        let lastYieldRestore = Date.now();
+
+        for (const f of metadata.files) {
+          try {
+            const mainEntry = entryMap.get(basePath + `files/${f.fileId}`);
+            if (mainEntry && rootDir) {
+              await extractEntryToOPFS(zipInfo, mainEntry, f.fileId);
+            }
+            const thumbEntry = entryMap.get(basePath + `thumbs/${f.fileId}`);
+            if (thumbEntry && rootDir) {
+              const thumbData = await extractEntryToBuffer(zipInfo, thumbEntry);
+              const fh = await rootDir.getFileHandle(THUMB_PREFIX + f.fileId, { create: true });
+              const wr = await fh.createWritable();
+              await wr.write(new Blob([thumbData]));
+              await wr.close();
+            }
+          } catch (e) { console.warn('Restore failed', f.name, e); }
+          i++;
+          const nowR = Date.now();
+          if (nowR - lastYieldRestore > 150 || i === totalFiles) {
+            lastYieldRestore = nowR;
+            showProgress('Восстановление', 10 + Math.round((i / totalFiles) * 80), f.name || `Файл ${i}`, `${i}/${totalFiles}`);
+            await nextMacrotask();
+          }
+        }
+
+        showProgress('Восстановление', 92, 'База данных...', '');
+        await nextMacrotask();
+
+        const t1 = db.transaction(SF, 'readwrite'); t1.objectStore(SF).clear();
+        await new Promise((res, rej) => { t1.oncomplete = res; t1.onerror = e => rej(e.target.error); });
+        const t2 = db.transaction(SFL, 'readwrite'); t2.objectStore(SFL).clear();
+        await new Promise((res, rej) => { t2.oncomplete = res; t2.onerror = e => rej(e.target.error); });
+        const t3 = db.transaction(SS, 'readwrite'); t3.objectStore(SS).clear();
+        await new Promise((res, rej) => { t3.oncomplete = res; t3.onerror = e => rej(e.target.error); });
+
+        const t4 = db.transaction(SF, 'readwrite'); const s4 = t4.objectStore(SF); metadata.files.forEach(f => s4.put(f));
+        await new Promise((res, rej) => { t4.oncomplete = res; t4.onerror = e => rej(e.target.error); });
+        const t5 = db.transaction(SFL, 'readwrite'); const s5 = t5.objectStore(SFL); metadata.folders.forEach(f => s5.put(f));
+        await new Promise((res, rej) => { t5.oncomplete = res; t5.onerror = e => rej(e.target.error); });
+        if (metadata.settings && metadata.settings.length) {
+          const t6 = db.transaction(SS, 'readwrite'); const s6 = t6.objectStore(SS); metadata.settings.forEach(s => s6.put(s));
+          await new Promise((res, rej) => { t6.oncomplete = res; t6.onerror = e => rej(e.target.error); });
+        }
+
+        settingsCache = null;
+        hideProgress();
+        toast('Готово', `Восстановлено ${totalFiles} файлов. Перезагрузка...`);
+        setTimeout(() => location.reload(), 1500);
+        releaseWakeLock();
+        return;
+      }
+
+      // ЭТО ОБЫЧНЫЙ АРХИВ С КАРТИНКАМИ (ПОТОКОВЫЙ РЕЖИМ)
       if (!await showConfirm('Большой архив', 
         `Архив ${(file.size / 1048576 / 1024).toFixed(1)} ГБ.<br><br>Он слишком большой для быстрой загрузки в память. Приложение будет читать его частями с диска. <b>Это может занять очень много времени.</b><br><br>Продолжить?`, 
         'Да, продолжить', 'Отмена')) return;
       
       await acquireWakeLock();
       showProgress('Импорт', 0, 'Анализ структуры...', '');
-      zipInfo = await parseZipStreaming(file);
       
       const mediaEntries = zipInfo.entries.filter(e => {
         if (!e.name || e.name.endsWith('/')) return false;
