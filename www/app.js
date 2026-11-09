@@ -580,7 +580,7 @@ async function writeStreamingZip(writable, items, onProgress) {
 }
 
 // ============================================================
-// IN-MEMORY ZIP READER (быстрый импорт до 1.5 ГБ)
+// IN-MEMORY ZIP READER (быстрый импорт до 3 ГБ)
 // ============================================================
 async function parseZip(blob) {
   const buf = new Uint8Array(await blob.arrayBuffer());
@@ -768,6 +768,7 @@ async function extractEntryToOPFS(zipInfo, entry, fileId) {
   const fh = await rootDir.getFileHandle(fileId, { create: true });
   const writable = await fh.createWritable();
   const CHUNK = 8 * 1024 * 1024;
+  let lastYield = Date.now();
 
   try {
     if (entry.method === 0) {
@@ -778,7 +779,7 @@ async function extractEntryToOPFS(zipInfo, entry, fileId) {
         const chunkBlob = zipInfo.file.slice(dataStart + off, dataStart + end);
         await writable.write(chunkBlob);
         off = end;
-        await nextMacrotask();
+        if (Date.now() - lastYield > 150) { await nextMacrotask(); lastYield = Date.now(); }
       }
     } else if (entry.method === 8) {
       const ds = new DecompressionStream('deflate-raw');
@@ -794,14 +795,16 @@ async function extractEntryToOPFS(zipInfo, entry, fileId) {
         for (const c of parts) { merged.set(c, o); o += c.length; }
         await writable.write(merged);
         parts = []; partsSize = 0;
-        await nextMacrotask();
       };
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         parts.push(value);
         partsSize += value.length;
-        if (partsSize >= CHUNK) await flushParts();
+        if (partsSize >= CHUNK) {
+          await flushParts();
+          if (Date.now() - lastYield > 150) { await nextMacrotask(); lastYield = Date.now(); }
+        }
       }
       await flushParts();
       await pipePromise;
@@ -3151,7 +3154,7 @@ window.importFromArchive = async (input) => {
   await nextMacrotask();
 
   try {
-    const RAM_LIMIT = 1.5 * 1024 * 1024 * 1024; // 1.5 ГБ
+    const RAM_LIMIT = 3.0 * 1024 * 1024 * 1024; // 3 ГБ
     let entries = null;
     let isStreamingMode = false;
     let zipInfo = null;
@@ -3168,7 +3171,6 @@ window.importFromArchive = async (input) => {
     }
 
     if (isStreamingMode) {
-      // Проверяем, есть ли в архиве файл metadata.json (признак полной резервной копии)
       hideProgress();
       zipInfo = await parseZipStreaming(file);
       let metadataEntry = null;
@@ -3177,7 +3179,6 @@ window.importFromArchive = async (input) => {
       }
 
       if (metadataEntry) {
-        // ЭТО ПОЛНАЯ РЕЗЕРВНАЯ КОПИЯ (ПОТОКОВЫЙ РЕЖИМ)
         showProgress('Восстановление', 0, 'Чтение метаданных...', '');
         const metaData = await extractEntryToBuffer(zipInfo, metadataEntry);
         const metadata = JSON.parse(new TextDecoder().decode(metaData));
@@ -3255,7 +3256,6 @@ window.importFromArchive = async (input) => {
         return;
       }
 
-      // ЭТО ОБЫЧНЫЙ АРХИВ С КАРТИНКАМИ (ПОТОКОВЫЙ РЕЖИМ)
       if (!await showConfirm('Большой архив', 
         `Архив ${(file.size / 1048576 / 1024).toFixed(1)} ГБ.<br><br>Он слишком большой для быстрой загрузки в память. Приложение будет читать его частями с диска. <b>Это может занять очень много времени.</b><br><br>Продолжить?`, 
         'Да, продолжить', 'Отмена')) return;
