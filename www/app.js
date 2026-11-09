@@ -199,7 +199,7 @@ const nextMacrotask = (() => {
 })();
 
 // ============================================================
-// KEEP-ALIVE — предотвращает троттлинг Chromium
+// KEEP-ALIVE
 // ============================================================
 let _kaEl = null, _kaRaf = null, _kaRunning = false, _kaI = 0;
 function startKeepAlive() {
@@ -359,7 +359,7 @@ const CRC_TABLE = (() => {
 })();
 
 // ============================================================
-// STREAMING ZIP WRITER (экспорт 50+ ГБ) — ИСПРАВЛЕН ZIP64
+// STREAMING ZIP WRITER — ИСПРАВЛЕН ZIP64
 // ============================================================
 function isCapacitorNative() {
   return window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform();
@@ -462,7 +462,6 @@ async function writeStreamingZip(writable, items, onProgress) {
     const size = blob.size;
     const needZip64Size = size > 0xFFFFFFFE;
 
-    // ---- LOCAL FILE HEADER ----
     const lfh = new Uint8Array(30 + nameBytes.length);
     const lfhDV = new DataView(lfh.buffer);
     lfhDV.setUint32(0, 0x04034b50, true);
@@ -482,7 +481,6 @@ async function writeStreamingZip(writable, items, onProgress) {
     await writable.write(lfh);
     offset += lfh.length;
 
-    // ---- DATA + CRC ----
     let crc = 0xFFFFFFFF;
     const reader = blob.stream().getReader();
     while (true) {
@@ -502,7 +500,6 @@ async function writeStreamingZip(writable, items, onProgress) {
     }
     crc = (crc ^ 0xFFFFFFFF) >>> 0;
 
-    // ---- DATA DESCRIPTOR (ZIP64 если size > 4 ГБ) ----
     const ddLen = needZip64Size ? 24 : 16;
     const dd = new Uint8Array(ddLen);
     const ddDV = new DataView(dd.buffer);
@@ -518,7 +515,6 @@ async function writeStreamingZip(writable, items, onProgress) {
     await writable.write(dd);
     offset += ddLen;
 
-    // ---- CENTRAL DIRECTORY (с ZIP64 extra field) ----
     const needZip64Offset = localHeaderOffset > 0xFFFFFFFE;
     let extraDataLen = 0;
     if (needZip64Size) extraDataLen += 16;
@@ -1380,13 +1376,41 @@ function detectType(file) {
 }
 const TYPE_LABEL = {image:'Фото', video:'Видео', other:'Файл'};
 
+// ============================================================
+// МУСОР — КАСКАДНОЕ УДАЛЕНИЕ ПАПОК
+// ============================================================
 async function moveToTrash(fileIds, folderIds) {
   const now = Date.now();
+  const allFolders = await getAllFolders();
+  const allFiles = await getAllFiles();
+
+  // Каскад по папкам: собираем всех потомков
+  const folderIdSet = new Set(folderIds);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const f of allFolders) {
+      if (f.parentId != null && folderIdSet.has(f.parentId) && !folderIdSet.has(f.id)) {
+        folderIdSet.add(f.id);
+        changed = true;
+      }
+    }
+  }
+
+  // Каскад по файлам: всё, что лежит в этих папках
+  const fileIdSet = new Set(fileIds);
+  for (const f of allFiles) {
+    if (!f.deleted && f.folderId != null && folderIdSet.has(f.folderId)) {
+      fileIdSet.add(f.id);
+    }
+  }
+
   const ts = db.transaction(SF,'readwrite'), ss = ts.objectStore(SF);
-  for (const id of fileIds) { const v = await p(ss.get(id)); if (v) { v.deleted = true; v.deletedAt = now; await p(ss.put(v)); } }
+  for (const id of fileIdSet) { const v = await p(ss.get(id)); if (v) { v.deleted = true; v.deletedAt = now; await p(ss.put(v)); } }
   await new Promise((res, rej) => { ts.oncomplete = res; ts.onerror = e => rej(e.target.error); });
+
   const tf = db.transaction(SFL,'readwrite'), sf = tf.objectStore(SFL);
-  for (const id of folderIds) { const v = await p(sf.get(id)); if (v) { v.deleted = true; v.deletedAt = now; await p(sf.put(v)); } }
+  for (const id of folderIdSet) { const v = await p(sf.get(id)); if (v) { v.deleted = true; v.deletedAt = now; await p(sf.put(v)); } }
   await new Promise((res, rej) => { tf.oncomplete = res; tf.onerror = e => rej(e.target.error); });
 }
 async function restoreFromTrash(fileIds, folderIds) {
@@ -1402,17 +1426,46 @@ async function deletePermanent(fileIds, folderIds) {
     if (el._blobUrl) { try { URL.revokeObjectURL(el._blobUrl); } catch(e) {} el._blobUrl = null; }
   });
   if ($('viewerModal').dataset.url) { URL.revokeObjectURL($('viewerModal').dataset.url); delete $('viewerModal').dataset.url; }
+
   const allFiles = await getAllFiles();
-  for (const f of allFiles.filter(f => fileIds.includes(f.id))) {
+  const allFolders = await getAllFolders();
+
+  // Каскад: потомки удаляемых папок
+  const folderIdSet = new Set(folderIds);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const f of allFolders) {
+      if (f.parentId != null && folderIdSet.has(f.parentId) && !folderIdSet.has(f.id)) {
+        folderIdSet.add(f.id);
+        changed = true;
+      }
+    }
+  }
+
+  // Каскад: файлы внутри удаляемых папок (включая осиротевшие)
+  const allFileIdSet = new Set(fileIds);
+  for (const f of allFiles) {
+    if (f.folderId != null && folderIdSet.has(f.folderId)) {
+      allFileIdSet.add(f.id);
+    }
+  }
+
+  // Удаляем blobs из OPFS
+  for (const f of allFiles.filter(f => allFileIdSet.has(f.id))) {
     await deleteFromOPFS(f.fileId);
     await deleteThumb(f.fileId);
   }
+
+  // Удаляем записи файлов из DB
   const t = db.transaction(SF,'readwrite'), s = t.objectStore(SF);
-  fileIds.forEach(id => s.delete(id));
+  allFileIdSet.forEach(id => s.delete(id));
   await new Promise((res, rej) => { t.oncomplete=res; t.onerror=e=>rej(e.target.error); });
-  if (folderIds && folderIds.length) {
+
+  // Удаляем записи папок из DB
+  if (folderIdSet.size > 0) {
     const tf = db.transaction(SFL,'readwrite'), sf = tf.objectStore(SFL);
-    folderIds.forEach(id => sf.delete(id));
+    folderIdSet.forEach(id => sf.delete(id));
     await new Promise((res, rej) => { tf.oncomplete=res; tf.onerror=e=>rej(e.target.error); });
   }
 }
@@ -1508,22 +1561,58 @@ async function compactDB() {
   try {
     let files = await getAllFiles(); let folders = await getAllFolders();
     const settings = await p(st(SS,'readonly').getAll());
+
+    // 1. Удаление корзины (файлы)
     const trashedFiles = files.filter(f => f.deleted);
     if (trashedFiles.length > 0) {
-      showProgress('Очистка', 20, 'Удаление корзины...', '...');
+      showProgress('Очистка', 15, 'Удаление корзины...', '...');
       for (const f of trashedFiles) { await deleteFromOPFS(f.fileId); await deleteThumb(f.fileId); }
       const t = db.transaction(SF,'readwrite'), s = t.objectStore(SF);
       trashedFiles.forEach(f => s.delete(f.id));
       await new Promise(r => setTimeout(r, 200));
       files = files.filter(f => !f.deleted);
     }
+
+    // 2. Удаление корзины (папки + их содержимое каскадно)
     const trashedFolders = folders.filter(f => f.deleted);
     if (trashedFolders.length > 0) {
+      const trashedFolderIds = new Set(trashedFolders.map(f => f.id));
+      let ch = true;
+      while (ch) {
+        ch = false;
+        for (const f of folders) {
+          if (f.deleted && f.parentId != null && trashedFolderIds.has(f.parentId) && !trashedFolderIds.has(f.id)) {
+            trashedFolderIds.add(f.id);
+            ch = true;
+          }
+        }
+      }
+      const orphanFiles = files.filter(f => trashedFolderIds.has(f.folderId));
+      for (const f of orphanFiles) { await deleteFromOPFS(f.fileId); await deleteThumb(f.fileId); }
+      const tFo = db.transaction(SF, 'readwrite'), sFo = tFo.objectStore(SF);
+      orphanFiles.forEach(f => sFo.delete(f.id));
+      await new Promise((res, rej) => { tFo.oncomplete = res; tFo.onerror = e => rej(e.target.error); });
+      files = files.filter(f => !trashedFolderIds.has(f.folderId));
+
       const tf = db.transaction(SFL,'readwrite'), sf = tf.objectStore(SFL);
-      trashedFolders.forEach(f => sf.delete(f.id));
+      trashedFolderIds.forEach(id => sf.delete(id));
       await new Promise(r => setTimeout(r, 200));
       folders = folders.filter(f => !f.deleted);
     }
+
+    // 3. Лечение осиротевших файлов (folderId указывает на несуществующую папку)
+    const validFolderIds = new Set(folders.map(f => f.id));
+    const trueOrphans = files.filter(f => f.folderId != null && !validFolderIds.has(f.folderId));
+    if (trueOrphans.length > 0) {
+      showProgress('Очистка', 30, `Осиротевшие: ${trueOrphans.length}...`, '');
+      for (const f of trueOrphans) { await deleteFromOPFS(f.fileId); await deleteThumb(f.fileId); }
+      const tOr = db.transaction(SF, 'readwrite'), sOr = tOr.objectStore(SF);
+      trueOrphans.forEach(f => sOr.delete(f.id));
+      await new Promise((res, rej) => { tOr.oncomplete = res; tOr.onerror = e => rej(e.target.error); });
+      files = files.filter(f => f.folderId == null || validFolderIds.has(f.folderId));
+    }
+
+    // 4. Уборка OPFS
     if (rootDir) {
       showProgress('Очистка', 40, 'Удаление лишних файлов...', '...');
       const validFileIds = new Set(files.map(f => f.fileId));
@@ -1541,6 +1630,7 @@ async function compactDB() {
         for (const name of toRemove) { try { await rootDir.removeEntry(name); } catch(e) {} }
       } catch(e) { console.warn('OPFS cleanup err', e); }
     }
+
     showProgress('Очистка', 60, 'Пересборка IndexedDB...', '...');
     db.close();
     await new Promise((res, rej) => {
@@ -3216,7 +3306,7 @@ window.importFromArchive = async (input) => {
   await nextMacrotask();
 
   try {
-    const RAM_LIMIT = 3.0 * 1024 * 1024 * 1024; // 3 ГБ
+    const RAM_LIMIT = 3.0 * 1024 * 1024 * 1024;
     let entries = null;
     let isStreamingMode = false;
     let zipInfo = null;
@@ -3374,7 +3464,6 @@ window.importFromArchive = async (input) => {
       const existingFiles = await getAllFiles();
       const existingHashes = new Set(existingFiles.filter(f => !f.deleted).map(f => f.hash).filter(h => h && !h.startsWith('unique_')));
 
-      // === БАТЧИНГ IndexedDB (ускорение) ===
       const pendingRecords = [];
       const FLUSH_SIZE = 100;
       const flushPending = async () => {
@@ -3448,7 +3537,6 @@ window.importFromArchive = async (input) => {
       return;
     }
 
-    // === БЫСТРЫЙ РЕЖИМ (IN-MEMORY) ===
     if (!entries.length) { hideProgress(); toast('Пусто', 'Архив пуст', true); return; }
 
     let metadataEntry = null;
