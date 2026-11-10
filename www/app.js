@@ -1865,23 +1865,17 @@ window.importNativeZip = async () => {
 
     if (!result.files || result.files.length === 0) return;
 
-    const fileUri = result.files[0].path;
-    
+    const originalUri = result.files[0].path;
+    safeZipName = `import_${Date.now()}.zip`;
+
     startAbortableOperation('import', 'Импорт');
     showProgress('Импорт', 0, 'Подготовка архива...', '', true);
 
-    safeZipName = `import_${Date.now()}.zip`;
-    
-    // Исправлено: используем строку 'CACHE' вместо Directory.Cache
-    await Filesystem.copy({
-      from: fileUri,
+    // ИСПОЛЬЗУЕМ FilePicker.copyFile для надежного копирования в кэш
+    const { uri: cachedZipUri } = await FilePicker.copyFile({
+      from: originalUri,
       to: safeZipName,
-      toDirectory: 'CACHE' 
-    });
-
-    const { uri: cachedZipUri } = await Filesystem.getUri({
-      path: safeZipName,
-      directory: 'CACHE'
+      toDirectory: 'CACHE'
     });
 
     showProgress('Импорт', 5, 'Нативная распаковка...', '', true);
