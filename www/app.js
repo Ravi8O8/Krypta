@@ -1853,50 +1853,45 @@ const ARCHIVE_MIME_MAP = { jpg:'image/jpeg', jpeg:'image/jpeg', png:'image/png',
 window.importNativeZip = async () => {
   const t0 = performance.now();
   let extractFolder = '';
-  let safeZipName = ''; // Объявляем здесь, чтобы удалить в finally
+  let safeZipName = '';
 
   try {
-    const { FilePicker, Filesystem, Directory, CapacitorZip } = window.Capacitor.Plugins;
+    const { FilePicker, Filesystem, CapacitorZip } = window.Capacitor.Plugins;
 
-    // 1. Открываем системный проводник Android
     const result = await FilePicker.pickFiles({
       types: ['application/zip', 'application/x-zip-compressed', 'application/octet-stream'],
-      readData: false // Не читаем файл в память JS!
+      readData: false
     });
 
-    if (!result.files || result.files.length === 0) return; // Пользователь отменил выбор
+    if (!result.files || result.files.length === 0) return;
 
-    const fileUri = result.files[0].path; // Исходный content:// URI
+    const fileUri = result.files[0].path;
     
     startAbortableOperation('import', 'Импорт');
     showProgress('Импорт', 0, 'Подготовка архива...', '', true);
 
-    // 2. КОПИРУЕМ файл в кэш приложения для надежного доступа
     safeZipName = `import_${Date.now()}.zip`;
     
-    // Эта команда берет файл по content:// URI и сохраняет его в папку CACHE приложения
+    // Исправлено: используем строку 'CACHE' вместо Directory.Cache
     await Filesystem.copy({
       from: fileUri,
       to: safeZipName,
-      toDirectory: Directory.Cache
+      toDirectory: 'CACHE' 
     });
 
-    // 3. Получаем прямой file:// URI для нативного плагина
     const { uri: cachedZipUri } = await Filesystem.getUri({
       path: safeZipName,
-      directory: Directory.Cache
+      directory: 'CACHE'
     });
 
     showProgress('Импорт', 5, 'Нативная распаковка...', '', true);
     extractFolder = `temp_extract_${Date.now()}`;
 
-    // 4. Слушатель прогресса
     const progressListener = await CapacitorZip.addListener('progress', (event) => {
       const percent = Math.round(event.progress * 100);
       showProgress('Импорт', 5 + Math.round(percent * 0.45), `Распаковка: ${percent}%`, '');
     });
 
-    // 5. Запускаем НАТИВНУЮ распаковку по прямому пути
     await CapacitorZip.unzip({
       source: cachedZipUri,
       destination: extractFolder
@@ -1905,10 +1900,9 @@ window.importNativeZip = async () => {
     progressListener.remove();
     showProgress('Импорт', 50, 'Анализ файлов...', '', true);
 
-    // 6. Собираем список распакованных файлов
     const allFiles = [];
     async function scanDir(path) {
-        const res = await Filesystem.readdir({ path, directory: Directory.Data });
+        const res = await Filesystem.readdir({ path, directory: 'DATA' });
         for (const f of res.files) {
             if (f.type === 'directory') await scanDir(`${path}/${f.name}`);
             else allFiles.push({ name: f.name, path: `${path}/${f.name}` });
@@ -1916,11 +1910,10 @@ window.importNativeZip = async () => {
     }
     await scanDir(extractFolder);
 
-    // 7. Проверка на бэкап (metadata.json)
     const metaFile = allFiles.find(f => f.name === 'metadata.json');
     if (metaFile) {
       showProgress('Восстановление', 0, 'Чтение метаданных...', '', true);
-      const metaData = await Filesystem.readFile({ path: metaFile.path, directory: Directory.Data });
+      const metaData = await Filesystem.readFile({ path: metaFile.path, directory: 'DATA' });
       const metadata = JSON.parse(atob(metaData.data));
       
       hideProgress();
@@ -1933,7 +1926,7 @@ window.importNativeZip = async () => {
         try {
           const mainEntry = allFiles.find(x => x.name === f.fileId && x.path.includes('/files/'));
           if (mainEntry && rootDir) {
-            const { uri } = await Filesystem.getUri({ path: mainEntry.path, directory: Directory.Data });
+            const { uri } = await Filesystem.getUri({ path: mainEntry.path, directory: 'DATA' });
             const res = await fetch(Capacitor.convertFileSrc(uri));
             const blob = await res.blob();
             const fh = await rootDir.getFileHandle(f.fileId, { create: true });
@@ -1942,7 +1935,7 @@ window.importNativeZip = async () => {
           }
           const thumbEntry = allFiles.find(x => x.name === f.fileId && x.path.includes('/thumbs/'));
           if (thumbEntry && rootDir) {
-            const { uri } = await Filesystem.getUri({ path: thumbEntry.path, directory: Directory.Data });
+            const { uri } = await Filesystem.getUri({ path: thumbEntry.path, directory: 'DATA' });
             const res = await fetch(Capacitor.convertFileSrc(uri));
             const blob = await res.blob();
             const fh = await rootDir.getFileHandle(THUMB_PREFIX + f.fileId, { create: true });
@@ -1966,7 +1959,6 @@ window.importNativeZip = async () => {
       setTimeout(() => location.reload(), 1500); return;
     }
 
-    // 8. Импорт обычных медиа
     const mediaFiles = allFiles.filter(f => {
       const ext = f.name.split('.').pop().toLowerCase();
       return ARCHIVE_MIME_MAP[ext] !== undefined;
@@ -2016,7 +2008,7 @@ window.importNativeZip = async () => {
         
         const ext = fileName.split('.').pop().toLowerCase(); const mime = ARCHIVE_MIME_MAP[ext] || '';
         
-        const { uri } = await Filesystem.getUri({ path: nf.path, directory: Directory.Data });
+        const { uri } = await Filesystem.getUri({ path: nf.path, directory: 'DATA' });
         const response = await fetch(Capacitor.convertFileSrc(uri));
         const blob = await response.blob();
 
@@ -2058,12 +2050,11 @@ window.importNativeZip = async () => {
     if (e.message === 'Отменено пользователем') toast('Отменено', 'Импорт остановлен'); 
     else toast('Ошибка', e.message || 'Не удалось обработать архив', true);
   } finally {
-    // Очищаем временные файлы
     if (safeZipName) {
-      try { await window.Capacitor.Plugins.Filesystem.deleteFile({ path: safeZipName, directory: window.Capacitor.Plugins.Directory.Cache }); } catch(e){}
+      try { await window.Capacitor.Plugins.Filesystem.deleteFile({ path: safeZipName, directory: 'CACHE' }); } catch(e){}
     }
     if (extractFolder) {
-      try { await window.Capacitor.Plugins.Filesystem.rmdir({ path: extractFolder, directory: window.Capacitor.Plugins.Directory.Data, recursive: true }); } catch(e){}
+      try { await window.Capacitor.Plugins.Filesystem.rmdir({ path: extractFolder, directory: 'DATA', recursive: true }); } catch(e){}
     }
     endAbortableOperation(); releaseWakeLock();
   }
