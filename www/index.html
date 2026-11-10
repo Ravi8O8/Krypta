@@ -128,7 +128,6 @@
 </div>
 
 <input type="file" id="file" accept="image/*,video/*" multiple>
-<input type="file" id="archiveImportFile" accept=".zip,application/zip,application/x-zip-compressed" style="display:none">
 <div id="toast"></div>
 
 <div class="modal" id="modalEdit">
@@ -244,7 +243,7 @@
       <div class="settings-card">
         <div class="settings-card-head with-divider"><div class="settings-icon-box green"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></div><div><div class="settings-card-title">Из ZIP-архива</div><div class="settings-card-sub">Медиа или полная копия</div></div></div>
         <div style="font-size:12px;color:var(--mut);line-height:1.5;margin-bottom:10px;">Поддерживаются обычные архивы с фото/видео (папки сохранятся) и полные резервные копии приложения. Дубликаты пропускаются автоматически.</div>
-        <button class="settings-btn" style="margin-top:0;" onclick="document.getElementById('archiveImportFile').click()"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Выбрать ZIP-архив</button>
+        <button class="settings-btn" style="margin-top:0;" onclick="importNativeZip()"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Выбрать ZIP-архив</button>
       </div>
     </div>
 
