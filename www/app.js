@@ -1850,50 +1850,62 @@ window.exportAllData = async () => {
 };
 
 const ARCHIVE_MIME_MAP = { jpg:'image/jpeg', jpeg:'image/jpeg', png:'image/png', webp:'image/webp', bmp:'image/bmp', heic:'image/heic', heif:'image/heif', avif:'image/avif', mp4:'video/mp4', webm:'video/webm', mov:'video/quicktime', avi:'video/x-msvideo', mkv:'video/x-matroska', m4v:'video/x-m4v', '3gp':'video/3gpp', flv:'video/x-flv', wmv:'video/x-ms-wmv' };
-
-// ==========================================
-// НОВЫЙ БЫСТРЫЙ ИМПОРТ ZIP (БЕЗ BASE64)
-// ==========================================
 window.importNativeZip = async () => {
   const t0 = performance.now();
   let extractFolder = '';
+  let safeZipName = ''; // Объявляем здесь, чтобы удалить в finally
 
   try {
-    // ИСПОЛЬЗУЕМ ПЛАГИН НАПРЯМУЮ ЧЕРЕЗ CAPACITOR, БЕЗ IMPORT
-    const { FilePicker } = window.Capacitor.Plugins;
-    
+    const { FilePicker, Filesystem, Directory, CapacitorZip } = window.Capacitor.Plugins;
+
     // 1. Открываем системный проводник Android
     const result = await FilePicker.pickFiles({
       types: ['application/zip', 'application/x-zip-compressed', 'application/octet-stream'],
-      readData: false // САМОЕ ВАЖНОЕ: мы не читаем файл в память JS!
+      readData: false // Не читаем файл в память JS!
     });
 
     if (!result.files || result.files.length === 0) return; // Пользователь отменил выбор
 
-    const fileUri = result.files[0].path; // Прямой путь вида content://...
+    const fileUri = result.files[0].path; // Исходный content:// URI
     
     startAbortableOperation('import', 'Импорт');
-    showProgress('Импорт', 0, 'Нативная распаковка...', '', true);
+    showProgress('Импорт', 0, 'Подготовка архива...', '', true);
 
-    const { Filesystem, Directory, CapacitorZip } = window.Capacitor.Plugins;
-    extractFolder = `temp_extract_${Date.now()}`;
-
-    // 2. Слушатель прогресса нативного плагина
-    const progressListener = await CapacitorZip.addListener('progress', (event) => {
-      const percent = Math.round(event.progress * 100);
-      showProgress('Импорт', Math.round(percent * 0.5), `Распаковка: ${percent}%`, '');
+    // 2. КОПИРУЕМ файл в кэш приложения для надежного доступа
+    safeZipName = `import_${Date.now()}.zip`;
+    
+    // Эта команда берет файл по content:// URI и сохраняет его в папку CACHE приложения
+    await Filesystem.copy({
+      from: fileUri,
+      to: safeZipName,
+      toDirectory: Directory.Cache
     });
 
-    // 3. Запускаем НАТИВНУЮ распаковку напрямую из проводника
+    // 3. Получаем прямой file:// URI для нативного плагина
+    const { uri: cachedZipUri } = await Filesystem.getUri({
+      path: safeZipName,
+      directory: Directory.Cache
+    });
+
+    showProgress('Импорт', 5, 'Нативная распаковка...', '', true);
+    extractFolder = `temp_extract_${Date.now()}`;
+
+    // 4. Слушатель прогресса
+    const progressListener = await CapacitorZip.addListener('progress', (event) => {
+      const percent = Math.round(event.progress * 100);
+      showProgress('Импорт', 5 + Math.round(percent * 0.45), `Распаковка: ${percent}%`, '');
+    });
+
+    // 5. Запускаем НАТИВНУЮ распаковку по прямому пути
     await CapacitorZip.unzip({
-      source: fileUri,
+      source: cachedZipUri,
       destination: extractFolder
     });
     
     progressListener.remove();
     showProgress('Импорт', 50, 'Анализ файлов...', '', true);
 
-    // 4. Собираем список распакованных файлов
+    // 6. Собираем список распакованных файлов
     const allFiles = [];
     async function scanDir(path) {
         const res = await Filesystem.readdir({ path, directory: Directory.Data });
@@ -1904,7 +1916,7 @@ window.importNativeZip = async () => {
     }
     await scanDir(extractFolder);
 
-    // 5. Проверка на бэкап (metadata.json)
+    // 7. Проверка на бэкап (metadata.json)
     const metaFile = allFiles.find(f => f.name === 'metadata.json');
     if (metaFile) {
       showProgress('Восстановление', 0, 'Чтение метаданных...', '', true);
@@ -1954,7 +1966,7 @@ window.importNativeZip = async () => {
       setTimeout(() => location.reload(), 1500); return;
     }
 
-    // 6. Импорт обычных медиа
+    // 8. Импорт обычных медиа
     const mediaFiles = allFiles.filter(f => {
       const ext = f.name.split('.').pop().toLowerCase();
       return ARCHIVE_MIME_MAP[ext] !== undefined;
@@ -2046,15 +2058,16 @@ window.importNativeZip = async () => {
     if (e.message === 'Отменено пользователем') toast('Отменено', 'Импорт остановлен'); 
     else toast('Ошибка', e.message || 'Не удалось обработать архив', true);
   } finally {
+    // Очищаем временные файлы
+    if (safeZipName) {
+      try { await window.Capacitor.Plugins.Filesystem.deleteFile({ path: safeZipName, directory: window.Capacitor.Plugins.Directory.Cache }); } catch(e){}
+    }
     if (extractFolder) {
       try { await window.Capacitor.Plugins.Filesystem.rmdir({ path: extractFolder, directory: window.Capacitor.Plugins.Directory.Data, recursive: true }); } catch(e){}
     }
     endAbortableOperation(); releaseWakeLock();
   }
 };
-// ==========================================
-// КОНЕЦ НОВОГО ИМПОРТА ZIP
-// ==========================================
 
 let ckTarget = null, ckLayout = 'ru', ckShift = false, ckNumeric = false;
 const CK_LAYOUTS = {
