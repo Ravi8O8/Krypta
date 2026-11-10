@@ -1871,11 +1871,11 @@ window.importNativeZip = async () => {
     startAbortableOperation('import', 'Импорт');
     showProgress('Импорт', 0, 'Подготовка архива...', '', true);
 
-    // ИСПОЛЬЗУЕМ FilePicker.copyFile для надежного копирования в кэш
+    // ИСПОЛЬЗУЕМ FilePicker.copyFile для надежного копирования в DATA
     const { uri: cachedZipUri } = await FilePicker.copyFile({
       from: originalUri,
       to: safeZipName,
-      toDirectory: 'CACHE'
+      toDirectory: 'DATA' // ИСПРАВЛЕНО: используем DATA
     });
 
     showProgress('Импорт', 5, 'Нативная распаковка...', '', true);
@@ -2045,7 +2045,7 @@ window.importNativeZip = async () => {
     else toast('Ошибка', e.message || 'Не удалось обработать архив', true);
   } finally {
     if (safeZipName) {
-      try { await window.Capacitor.Plugins.Filesystem.deleteFile({ path: safeZipName, directory: 'CACHE' }); } catch(e){}
+      try { await window.Capacitor.Plugins.Filesystem.deleteFile({ path: safeZipName, directory: 'DATA' }); } catch(e){}
     }
     if (extractFolder) {
       try { await window.Capacitor.Plugins.Filesystem.rmdir({ path: extractFolder, directory: 'DATA', recursive: true }); } catch(e){}
