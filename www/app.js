@@ -1,5 +1,3 @@
-import { FilePicker } from '@capawesome/capacitor-file-picker';
-
 const DB_NAME='MediaVault_Final', DB_VERSION=33;
 const SF='files', SFL='folders', SS='settings';
 const THUMB_PREFIX = 'thumb_';
@@ -1861,6 +1859,9 @@ window.importNativeZip = async () => {
   let extractFolder = '';
 
   try {
+    // ИСПОЛЬЗУЕМ ПЛАГИН НАПРЯМУЮ ЧЕРЕЗ CAPACITOR, БЕЗ IMPORT
+    const { FilePicker } = window.Capacitor.Plugins;
+    
     // 1. Открываем системный проводник Android
     const result = await FilePicker.pickFiles({
       types: ['application/zip', 'application/x-zip-compressed', 'application/octet-stream'],
