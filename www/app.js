@@ -2067,10 +2067,16 @@ window.importFromArchive = async (input) => {
         hideProgress();
         if (!await showConfirm('Восстановление', 'Обнаружена полная резервная копия.<br><br>Все текущие данные будут <b>заменены</b>. Продолжить?', 'Восстановить', 'Отмена')) return;
         await acquireWakeLock();
+        
         const basePath = metadataEntry.name.substring(0, metadataEntry.name.length - 'metadata.json'.length);
         const entryMap = new Map(zipInfo.entries.map(e => [e.name, e]));
-        const totalFiles = metadata.files.length; let i = 0; let lastYieldRestore = Date.now();
-        for (const f of metadata.files) {
+        
+        // Ищем только те файлы, которые реально существуют в архиве
+        const validFiles = metadata.files.filter(f => entryMap.has(basePath + `files/${f.fileId}`));
+        const missingCount = metadata.files.length - validFiles.length;
+
+        const totalFiles = validFiles.length; let i = 0; let lastYieldRestore = Date.now();
+        for (const f of validFiles) {
           checkAbort();
           try {
             const mainEntry = entryMap.get(basePath + `files/${f.fileId}`);
@@ -2085,10 +2091,12 @@ window.importFromArchive = async (input) => {
         const t1 = db.transaction(SF, 'readwrite'); t1.objectStore(SF).clear(); await new Promise((res, rej) => { t1.oncomplete = res; t1.onerror = e => rej(e.target.error); });
         const t2 = db.transaction(SFL, 'readwrite'); t2.objectStore(SFL).clear(); await new Promise((res, rej) => { t2.oncomplete = res; t2.onerror = e => rej(e.target.error); });
         const t3 = db.transaction(SS, 'readwrite'); t3.objectStore(SS).clear(); await new Promise((res, rej) => { t3.oncomplete = res; t3.onerror = e => rej(e.target.error); });
-        const t4 = db.transaction(SF, 'readwrite'); const s4 = t4.objectStore(SF); metadata.files.forEach(f => s4.put(f)); await new Promise((res, rej) => { t4.oncomplete = res; t4.onerror = e => rej(e.target.error); });
+        const t4 = db.transaction(SF, 'readwrite'); const s4 = t4.objectStore(SF); validFiles.forEach(f => s4.put(f)); await new Promise((res, rej) => { t4.oncomplete = res; t4.onerror = e => rej(e.target.error); });
         const t5 = db.transaction(SFL, 'readwrite'); const s5 = t5.objectStore(SFL); metadata.folders.forEach(f => s5.put(f)); await new Promise((res, rej) => { t5.oncomplete = res; t5.onerror = e => rej(e.target.error); });
         if (metadata.settings && metadata.settings.length) { const t6 = db.transaction(SS, 'readwrite'); const s6 = t6.objectStore(SS); metadata.settings.forEach(s => s6.put(s)); await new Promise((res, rej) => { t6.oncomplete = res; t6.onerror = e => rej(e.target.error); }); }
-        settingsCache = null; hideProgress(); toast('Готово', `Восстановлено ${totalFiles} файлов. Перезагрузка...`);
+        settingsCache = null; hideProgress(); 
+        const skipMsg = missingCount > 0 ? ` (Пропущено отсутствующих: ${missingCount})` : '';
+        toast('Готово', `Восстановлено ${totalFiles} файлов.${skipMsg} Перезагрузка...`);
         setTimeout(() => location.reload(), 1500); return;
       }
       if (!await showConfirm('Большой архив', `Архив ${(file.size / 1048576 / 1024).toFixed(1)} ГБ.<br><br>Будет читаться с диска частями. <b>Это может занять много времени.</b><br><br>Продолжить?`, 'Да, продолжить', 'Отмена')) return;
@@ -2156,10 +2164,16 @@ window.importFromArchive = async (input) => {
       hideProgress();
       if (!await showConfirm('Восстановление', 'Обнаружена полная резервная копия.<br><br>Все текущие данные будут <b>заменены</b>. Продолжить?', 'Восстановить', 'Отмена')) return;
       await acquireWakeLock();
+      
       const basePath = metadataEntry.name.substring(0, metadataEntry.name.length - 'metadata.json'.length);
       const entryMap = new Map(entries.map(e => [e.name, e]));
-      const totalFiles = metadata.files.length; let i = 0; let lastYieldRestore = Date.now();
-      for (const f of metadata.files) {
+      
+      // Ищем только те файлы, которые реально существуют в архиве
+      const validFiles = metadata.files.filter(f => entryMap.has(basePath + `files/${f.fileId}`));
+      const missingCount = metadata.files.length - validFiles.length;
+
+      const totalFiles = validFiles.length; let i = 0; let lastYieldRestore = Date.now();
+      for (const f of validFiles) {
         checkAbort();
         try {
           const mainEntry = entryMap.get(basePath + `files/${f.fileId}`);
@@ -2174,10 +2188,12 @@ window.importFromArchive = async (input) => {
       const t1 = db.transaction(SF, 'readwrite'); t1.objectStore(SF).clear(); await new Promise((res, rej) => { t1.oncomplete = res; t1.onerror = e => rej(e.target.error); });
       const t2 = db.transaction(SFL, 'readwrite'); t2.objectStore(SFL).clear(); await new Promise((res, rej) => { t2.oncomplete = res; t2.onerror = e => rej(e.target.error); });
       const t3 = db.transaction(SS, 'readwrite'); t3.objectStore(SS).clear(); await new Promise((res, rej) => { t3.oncomplete = res; t3.onerror = e => rej(e.target.error); });
-      const t4 = db.transaction(SF, 'readwrite'); const s4 = t4.objectStore(SF); metadata.files.forEach(f => s4.put(f)); await new Promise((res, rej) => { t4.oncomplete = res; t4.onerror = e => rej(e.target.error); });
+      const t4 = db.transaction(SF, 'readwrite'); const s4 = t4.objectStore(SF); validFiles.forEach(f => s4.put(f)); await new Promise((res, rej) => { t4.oncomplete = res; t4.onerror = e => rej(e.target.error); });
       const t5 = db.transaction(SFL, 'readwrite'); const s5 = t5.objectStore(SFL); metadata.folders.forEach(f => s5.put(f)); await new Promise((res, rej) => { t5.oncomplete = res; t5.onerror = e => rej(e.target.error); });
       if (metadata.settings && metadata.settings.length) { const t6 = db.transaction(SS, 'readwrite'); const s6 = t6.objectStore(SS); metadata.settings.forEach(s => s6.put(s)); await new Promise((res, rej) => { t6.oncomplete = res; t6.onerror = e => rej(e.target.error); }); }
-      settingsCache = null; hideProgress(); toast('Готово', `Восстановлено ${totalFiles} файлов. Перезагрузка...`);
+      settingsCache = null; hideProgress(); 
+      const skipMsg = missingCount > 0 ? ` (Пропущено отсутствующих: ${missingCount})` : '';
+      toast('Готово', `Восстановлено ${totalFiles} файлов.${skipMsg} Перезагрузка...`);
       setTimeout(() => location.reload(), 1500); return;
     }
     const mediaEntries = entries.filter(e => { if (!e.name || e.name.endsWith('/')) return false; if (!e.data || e.data.length === 0) return false; const parts = e.name.split('/'); if (parts.some(p => p.startsWith('__MACOSX') || p.startsWith('.'))) return false; const m = e.name.match(/\.([a-z0-9]+)$/i); return m && ARCHIVE_MIME_MAP[m[1].toLowerCase()] !== undefined; });
