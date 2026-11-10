@@ -341,202 +341,10 @@ async function writeStreamingZip(writable, items, onProgress) {
   await writable.write(eocd);
 }
 
-async function parseZip(blob) {
-  const buf = new Uint8Array(await blob.arrayBuffer());
-  const dv = new DataView(buf.buffer);
-  const files = [];
-  let eocdPos = -1;
-  for (let i = buf.length - 22; i >= Math.max(0, buf.length - 22 - 65536); i--) if (dv.getUint32(i, true) === 0x06054b50) { eocdPos = i; break; }
-  if (eocdPos === -1) throw new Error('Неверный ZIP архив (нет EOCD)');
-  let cdOffset = dv.getUint32(eocdPos + 16, true), cdCount = dv.getUint16(eocdPos + 10, true), cdSize = dv.getUint32(eocdPos + 12, true);
-  if (eocdPos >= 20) {
-    const locPos = eocdPos - 20;
-    if (dv.getUint32(locPos, true) === 0x07064b50) {
-      const z64Offset = Number(dv.getBigUint64(locPos + 8, true));
-      if (z64Offset + 56 <= buf.length && dv.getUint32(z64Offset, true) === 0x06064b50) {
-        cdCount = Number(dv.getBigUint64(z64Offset + 32, true));
-        cdSize = Number(dv.getBigUint64(z64Offset + 40, true));
-        cdOffset = Number(dv.getBigUint64(z64Offset + 48, true));
-      }
-    }
-  }
-  let pos = cdOffset;
-  for (let i = 0; i < cdCount; i++) {
-    if (pos + 46 > buf.length) break;
-    if (dv.getUint32(pos, true) !== 0x02014b50) break;
-    const method = dv.getUint16(pos + 10, true);
-    let compSize = dv.getUint32(pos + 20, true), uncompSize = dv.getUint32(pos + 24, true);
-    const nameLen = dv.getUint16(pos + 28, true), extraLen = dv.getUint16(pos + 30, true), commentLen = dv.getUint16(pos + 32, true);
-    let localOffset = dv.getUint32(pos + 42, true);
-    const name = new TextDecoder().decode(buf.subarray(pos + 46, pos + 46 + nameLen));
-    if (compSize === 0xFFFFFFFF || uncompSize === 0xFFFFFFFF || localOffset === 0xFFFFFFFF) {
-      let ep = pos + 46 + nameLen; const epEnd = ep + extraLen;
-      while (ep + 4 <= epEnd) {
-        const tag = dv.getUint16(ep, true), sz = dv.getUint16(ep + 2, true);
-        if (tag === 0x0001) {
-          let dp = ep + 4;
-          if (uncompSize === 0xFFFFFFFF && dp + 8 <= epEnd) { uncompSize = Number(dv.getBigUint64(dp, true)); dp += 8; }
-          if (compSize === 0xFFFFFFFF && dp + 8 <= epEnd) { compSize = Number(dv.getBigUint64(dp, true)); dp += 8; }
-          if (localOffset === 0xFFFFFFFF && dp + 8 <= epEnd) { localOffset = Number(dv.getBigUint64(dp, true)); dp += 8; }
-          break;
-        }
-        ep += 4 + sz;
-      }
-    }
-    const lnameLen = dv.getUint16(localOffset + 26, true), lextraLen = dv.getUint16(localOffset + 28, true);
-    const dataStart = localOffset + 30 + lnameLen + lextraLen;
-    if (dataStart + compSize > buf.length) { pos += 46 + nameLen + extraLen + commentLen; continue; }
-    const rawData = buf.subarray(dataStart, dataStart + compSize);
-    let data;
-    if (method === 0) data = rawData;
-    else if (method === 8) {
-      try {
-        const ds = new DecompressionStream('deflate-raw');
-        const writer = ds.writable.getWriter(); writer.write(rawData); writer.close();
-        const reader = ds.readable.getReader(); const chunks = [];
-        while (true) { const { done, value } = await reader.read(); if (done) break; chunks.push(value); }
-        const out = new Uint8Array(chunks.reduce((s, c) => s + c.length, 0));
-        let off = 0; for (const c of chunks) { out.set(c, off); off += c.length; }
-        data = out;
-      } catch (e) { pos += 46 + nameLen + extraLen + commentLen; continue; }
-    } else { pos += 46 + nameLen + extraLen + commentLen; continue; }
-    files.push({ name, data });
-    pos += 46 + nameLen + extraLen + commentLen;
-  }
-  return files;
-}
-
-async function parseZipStreaming(file) {
-  if (file.size < 22) throw new Error('Файл слишком мал');
-  const tailSize = Math.min(file.size, 65557), tailStart = file.size - tailSize;
-  const tailBuf = new Uint8Array(await file.slice(tailStart).arrayBuffer());
-  let eocdPos = -1;
-  for (let i = tailBuf.length - 22; i >= 0; i--) if (tailBuf[i] === 0x50 && tailBuf[i+1] === 0x4b && tailBuf[i+2] === 0x05 && tailBuf[i+3] === 0x06) { eocdPos = i; break; }
-  if (eocdPos === -1) throw new Error('Неверный ZIP (нет EOCD)');
-  const eocdDV = new DataView(tailBuf.buffer, eocdPos);
-  let cdCount = eocdDV.getUint16(10, true), cdSize = eocdDV.getUint32(12, true), cdOffset = eocdDV.getUint32(16, true);
-  if (eocdPos >= 20) {
-    const locPos = eocdPos - 20; const locDV = new DataView(tailBuf.buffer, locPos);
-    if (locDV.getUint32(0, true) === 0x07064b50) {
-      const z64EocdOffset = Number(locDV.getBigUint64(8, true));
-      if (z64EocdOffset + 56 <= file.size) {
-        const z64Buf = new Uint8Array(await file.slice(z64EocdOffset, z64EocdOffset + 56).arrayBuffer());
-        const z64DV = new DataView(z64Buf.buffer);
-        if (z64DV.getUint32(0, true) === 0x06064b50) {
-          cdCount = Number(z64DV.getBigUint64(32, true));
-          cdSize = Number(z64DV.getBigUint64(40, true));
-          cdOffset = Number(z64DV.getBigUint64(48, true));
-        }
-      }
-    }
-  }
-  const cdBuf = new Uint8Array(await file.slice(cdOffset, cdOffset + cdSize).arrayBuffer());
-  const cdDV = new DataView(cdBuf.buffer);
-  const entries = []; let pos = 0;
-  for (let i = 0; i < cdCount; i++) {
-    if (pos + 46 > cdBuf.length) break;
-    if (cdDV.getUint32(pos, true) !== 0x02014b50) break;
-    const method = cdDV.getUint16(pos + 10, true); const crc = cdDV.getUint32(pos + 16, true);
-    let compSize = cdDV.getUint32(pos + 20, true), uncompSize = cdDV.getUint32(pos + 24, true);
-    const nameLen = cdDV.getUint16(pos + 28, true), extraLen = cdDV.getUint16(pos + 30, true), commentLen = cdDV.getUint16(pos + 32, true);
-    let localOffset = cdDV.getUint32(pos + 42, true);
-    const name = new TextDecoder().decode(cdBuf.slice(pos + 46, pos + 46 + nameLen));
-    const extra = cdBuf.slice(pos + 46 + nameLen, pos + 46 + nameLen + extraLen);
-    if (compSize === 0xFFFFFFFF || uncompSize === 0xFFFFFFFF || localOffset === 0xFFFFFFFF) {
-      let ep = 0;
-      while (ep + 4 <= extra.length) {
-        const tag = extra[ep] | (extra[ep+1] << 8); const sz = extra[ep+2] | (extra[ep+3] << 8);
-        if (tag === 0x0001) {
-          let dp = ep + 4;
-          if (uncompSize === 0xFFFFFFFF && dp + 8 <= extra.length) { uncompSize = Number(new DataView(extra.buffer, extra.byteOffset + dp, 8).getBigUint64(0, true)); dp += 8; }
-          if (compSize === 0xFFFFFFFF && dp + 8 <= extra.length) { compSize = Number(new DataView(extra.buffer, extra.byteOffset + dp, 8).getBigUint64(0, true)); dp += 8; }
-          if (localOffset === 0xFFFFFFFF && dp + 8 <= extra.length) { localOffset = Number(new DataView(extra.buffer, extra.byteOffset + dp, 8).getBigUint64(0, true)); dp += 8; }
-          break;
-        }
-        ep += 4 + sz;
-      }
-    }
-    entries.push({ name, method, compSize, uncompSize, localOffset, crc });
-    pos += 46 + nameLen + extraLen + commentLen;
-  }
-  return { file, entries };
-}
-
-async function extractEntryToOPFS(zipInfo, entry, fileId) {
-  const lhBuf = new Uint8Array(await zipInfo.file.slice(entry.localOffset, entry.localOffset + 30).arrayBuffer());
-  const lhDV = new DataView(lhBuf.buffer);
-  const dataStart = entry.localOffset + 30 + lhDV.getUint16(26, true) + lhDV.getUint16(28, true);
-  const fh = await rootDir.getFileHandle(fileId, { create: true });
-  const writable = await fh.createWritable();
-  const CHUNK = 8 * 1024 * 1024; let lastYield = Date.now();
-  try {
-    if (entry.method === 0) {
-      let off = 0; const total = entry.compSize;
-      while (off < total) {
-        const end = Math.min(off + CHUNK, total);
-        await writable.write(zipInfo.file.slice(dataStart + off, dataStart + end));
-        off = end;
-        if (Date.now() - lastYield > 150) { await nextMacrotask(); lastYield = Date.now(); }
-      }
-    } else if (entry.method === 8) {
-      const ds = new DecompressionStream('deflate-raw');
-      const dsWriter = ds.writable.getWriter(); const dsReader = ds.readable.getReader();
-      const writePromise = (async () => {
-        const end = dataStart + entry.compSize; let offset = dataStart;
-        while (offset < end) {
-          const chunkEnd = Math.min(offset + CHUNK, end);
-          const buf = new Uint8Array(await zipInfo.file.slice(offset, chunkEnd).arrayBuffer());
-          await dsWriter.write(buf); offset = chunkEnd;
-          if (Date.now() - lastYield > 150) { await nextMacrotask(); lastYield = Date.now(); }
-        }
-        await dsWriter.close();
-      })();
-      let parts = [], partsSize = 0;
-      const flushParts = async () => {
-        if (partsSize === 0) return;
-        const merged = new Uint8Array(partsSize); let o = 0;
-        for (const c of parts) { merged.set(c, o); o += c.length; }
-        await writable.write(merged); parts = []; partsSize = 0;
-      };
-      try {
-        while (true) {
-          const { done, value } = await dsReader.read();
-          if (done) break;
-          parts.push(value); partsSize += value.length;
-          if (partsSize >= CHUNK) { await flushParts(); if (Date.now() - lastYield > 150) { await nextMacrotask(); lastYield = Date.now(); } }
-        }
-        await flushParts(); await writePromise;
-      } catch (e) { try { await dsWriter.abort(); } catch(_) {} throw e; }
-    } else throw new Error('Неизвестный метод сжатия ' + entry.method);
-    await writable.close();
-    return true;
-  } catch (e) { try { await writable.abort(); } catch(_) {} try { await rootDir.removeEntry(fileId); } catch(_) {} throw e; }
-}
-
-async function extractEntryToBuffer(zipInfo, entry) {
-  if (entry.compSize === 0 && entry.uncompSize === 0) return new Uint8Array(0);
-  const lhBuf = new Uint8Array(await zipInfo.file.slice(entry.localOffset, entry.localOffset + 30).arrayBuffer());
-  const lhDV = new DataView(lhBuf.buffer);
-  const dataStart = entry.localOffset + 30 + lhDV.getUint16(26, true) + lhDV.getUint16(28, true);
-  const dataBlob = zipInfo.file.slice(dataStart, dataStart + entry.compSize);
-  if (entry.method === 0) return new Uint8Array(await dataBlob.arrayBuffer());
-  if (entry.method === 8) {
-    const ds = new DecompressionStream('deflate-raw');
-    const pipePromise = dataBlob.stream().pipeTo(ds.writable);
-    const chunks = []; const reader = ds.readable.getReader();
-    while (true) { const { done, value } = await reader.read(); if (done) break; chunks.push(value); }
-    await pipePromise;
-    const out = new Uint8Array(chunks.reduce((s, c) => s + c.length, 0));
-    let off = 0; for (const c of chunks) { out.set(c, off); off += c.length; }
-    return out;
-  }
-  throw new Error('Неизвестный метод сжатия ' + entry.method);
-}
-
 function sanitizeName(name) { return String(name || 'file').replace(/[\/\\:*?"<>|\x00-\x1f]/g, '_'); }
 
 async function extractExifDate(file) {
-  if (!file || !file.type.startsWith('image/')) return null;
+  if (!file || !file.type || !file.type.startsWith('image/')) return null;
   if (file.size < 32) return null;
   try {
     const head = new Uint8Array(await file.slice(0, Math.min(file.size, 128 * 1024)).arrayBuffer());
@@ -2043,153 +1851,131 @@ window.exportAllData = async () => {
 
 const ARCHIVE_MIME_MAP = { jpg:'image/jpeg', jpeg:'image/jpeg', png:'image/png', webp:'image/webp', bmp:'image/bmp', heic:'image/heic', heif:'image/heif', avif:'image/avif', mp4:'video/mp4', webm:'video/webm', mov:'video/quicktime', avi:'video/x-msvideo', mkv:'video/x-matroska', m4v:'video/x-m4v', '3gp':'video/3gpp', flv:'video/x-flv', wmv:'video/x-ms-wmv' };
 
+// ==========================================
+// НАЧАЛО НОВОЙ ФУНКЦИИ ИМПОРТА ZIP (НАТИВНАЯ)
+// ==========================================
 window.importFromArchive = async (input) => {
   const file = input.files[0]; if (!file) return; input.value = '';
   const t0 = performance.now();
   if (!await checkFreeSpace(file.size * 1.2, 'Импорт')) return;
   startAbortableOperation('import', 'Импорт');
-  showProgress('Импорт', 0, 'Чтение архива...', `${(file.size / 1048576).toFixed(0)} МБ`, true);
-  await nextMacrotask();
-  try {
-    const RAM_LIMIT = 3.0 * 1024 * 1024 * 1024;
-    let entries = null, isStreamingMode = false, zipInfo = null;
-    if (file.size <= RAM_LIMIT) { try { entries = await parseZip(file); } catch (oomErr) { isStreamingMode = true; } }
-    else isStreamingMode = true;
+  showProgress('Импорт', 0, 'Подготовка архива...', '', true);
+  
+  const { Filesystem, Directory, CapacitorZip } = window.Capacitor.Plugins;
+  const tempZipPath = `temp_zip_${Date.now()}.zip`;
+  const extractFolder = `temp_extract_${Date.now()}`;
+  let savedZipUri = '';
 
-    if (isStreamingMode) {
-      hideProgress(); zipInfo = await parseZipStreaming(file);
-      let metadataEntry = null;
-      for (const e of zipInfo.entries) if (e.name.endsWith('metadata.json')) { metadataEntry = e; break; }
-      if (metadataEntry) {
-        showProgress('Восстановление', 0, 'Чтение метаданных...', '', true);
-        const metaData = await extractEntryToBuffer(zipInfo, metadataEntry);
-        const metadata = JSON.parse(new TextDecoder().decode(metaData));
-        hideProgress();
-        if (!await showConfirm('Восстановление', 'Обнаружена полная резервная копия.<br><br>Все текущие данные будут <b>заменены</b>. Продолжить?', 'Восстановить', 'Отмена')) return;
-        await acquireWakeLock();
-        const basePath = metadataEntry.name.substring(0, metadataEntry.name.length - 'metadata.json'.length);
-        const entryMap = new Map(zipInfo.entries.map(e => [e.name, e]));
-        const totalFiles = metadata.files.length; let i = 0; let lastYieldRestore = Date.now();
-        for (const f of metadata.files) {
-          checkAbort();
-          try {
-            const mainEntry = entryMap.get(basePath + `files/${f.fileId}`);
-            if (mainEntry && rootDir) await extractEntryToOPFS(zipInfo, mainEntry, f.fileId);
-            const thumbEntry = entryMap.get(basePath + `thumbs/${f.fileId}`);
-            if (thumbEntry && rootDir) { const thumbData = await extractEntryToBuffer(zipInfo, thumbEntry); const fh = await rootDir.getFileHandle(THUMB_PREFIX + f.fileId, { create: true }); const wr = await fh.createWritable(); await wr.write(new Blob([thumbData])); await wr.close(); }
-          } catch (e) { console.warn('Restore failed', f.name, e); }
-          i++; const nowR = Date.now();
-          if (nowR - lastYieldRestore > 150 || i === totalFiles) { lastYieldRestore = nowR; showProgress('Восстановление', 10 + Math.round((i / totalFiles) * 80), f.name || `Файл ${i}`, `${i}/${totalFiles}`); await nextMacrotask(); }
+  try {
+    // 1. Сохраняем ZIP в кэш (чанками, чтобы не было OOM)
+    await writeBlobToCacheChunked(file, tempZipPath, (pct) => {
+       showProgress('Импорт', Math.round(pct * 20), 'Сохранение архива...', '');
+    });
+    
+    const { uri } = await Filesystem.getUri({ path: tempZipPath, directory: Directory.Cache });
+    savedZipUri = uri;
+
+    showProgress('Импорт', 20, 'Распаковка (нативно)...', '', true);
+    
+    // 2. Нативная распаковка
+    const progressListener = await CapacitorZip.addListener('progress', (event) => {
+      const percent = Math.round(event.progress * 100);
+      showProgress('Импорт', 20 + Math.round(percent * 0.3), `Распаковка: ${percent}%`, '');
+    });
+
+    await CapacitorZip.unzip({
+      source: savedZipUri,
+      destination: extractFolder // Извлечет в Directory.Data/extractFolder
+    });
+    
+    progressListener.remove();
+    showProgress('Импорт', 50, 'Анализ файлов...', '', true);
+
+    // 3. Собираем список распакованных файлов
+    const allFiles = [];
+    async function scanDir(path) {
+        const res = await Filesystem.readdir({ path, directory: Directory.Data });
+        for (const f of res.files) {
+            if (f.type === 'directory') await scanDir(`${path}/${f.name}`);
+            else allFiles.push({ name: f.name, path: `${path}/${f.name}` });
         }
-        showProgress('Восстановление', 92, 'База данных...', '', true); await nextMacrotask();
-        const t1 = db.transaction(SF, 'readwrite'); t1.objectStore(SF).clear(); await new Promise((res, rej) => { t1.oncomplete = res; t1.onerror = e => rej(e.target.error); });
-        const t2 = db.transaction(SFL, 'readwrite'); t2.objectStore(SFL).clear(); await new Promise((res, rej) => { t2.oncomplete = res; t2.onerror = e => rej(e.target.error); });
-        const t3 = db.transaction(SS, 'readwrite'); t3.objectStore(SS).clear(); await new Promise((res, rej) => { t3.oncomplete = res; t3.onerror = e => rej(e.target.error); });
-        const t4 = db.transaction(SF, 'readwrite'); const s4 = t4.objectStore(SF); metadata.files.forEach(f => s4.put(f)); await new Promise((res, rej) => { t4.oncomplete = res; t4.onerror = e => rej(e.target.error); });
-        const t5 = db.transaction(SFL, 'readwrite'); const s5 = t5.objectStore(SFL); metadata.folders.forEach(f => s5.put(f)); await new Promise((res, rej) => { t5.oncomplete = res; t5.onerror = e => rej(e.target.error); });
-        if (metadata.settings && metadata.settings.length) { const t6 = db.transaction(SS, 'readwrite'); const s6 = t6.objectStore(SS); metadata.settings.forEach(s => s6.put(s)); await new Promise((res, rej) => { t6.oncomplete = res; t6.onerror = e => rej(e.target.error); }); }
-        settingsCache = null; hideProgress(); toast('Готово', `Восстановлено ${totalFiles} файлов. Перезагрузка...`);
-        setTimeout(() => location.reload(), 1500); return;
-      }
-      if (!await showConfirm('Большой архив', `Архив ${(file.size / 1048576 / 1024).toFixed(1)} ГБ.<br><br>Будет читаться с диска частями. <b>Это может занять много времени.</b><br><br>Продолжить?`, 'Да, продолжить', 'Отмена')) return;
-      await acquireWakeLock(); showProgress('Импорт', 0, 'Анализ структуры...', '', true);
-      const mediaEntries = zipInfo.entries.filter(e => { if (!e.name || e.name.endsWith('/')) return false; const parts = e.name.split('/'); if (parts.some(p => p.startsWith('__MACOSX') || p.startsWith('.'))) return false; const m = e.name.match(/\.([a-z0-9]+)$/i); return m && ARCHIVE_MIME_MAP[m[1].toLowerCase()] !== undefined; });
-      if (mediaEntries.length === 0) { hideProgress(); toast('Пусто', 'В архиве не найдено фото или видео', true); return; }
-      if (!await showConfirm('Импорт', `Найдено <b>${mediaEntries.length}</b> медиафайлов.<br><br>Начать импорт?`, 'Импортировать', 'Отмена')) return;
-      showProgress('Импорт', 3, 'Создание папок...', '', true); await nextMacrotask();
-      const folderPaths = new Set();
-      mediaEntries.forEach(e => { const parts = e.name.split('/'); parts.pop(); for (let i = 1; i <= parts.length; i++) folderPaths.add(parts.slice(0, i).join('/')); });
-      const existingFolders = await getAllFolders(); const folderMap = new Map();
-      const sortedPaths = [...folderPaths].sort((a, b) => a.split('/').length - b.split('/').length);
-      for (const path of sortedPaths) {
-        const parts = path.split('/'); const name = parts[parts.length - 1];
-        const parentPath = parts.slice(0, -1).join('/');
-        const parentId = parentPath ? folderMap.get(parentPath) : currentFolder;
-        const existing = existingFolders.find(f => f.parentId === parentId && f.name === name && !f.deleted);
-        let folderId;
-        if (existing) folderId = existing.id;
-        else { folderId = await addFolder(name, parentId, FOLDER_COLORS[Math.floor(Math.random() * FOLDER_COLORS.length)]); existingFolders.push({ id: folderId, name, parentId: parentId ?? null, deleted: false }); }
-        folderMap.set(path, folderId);
-      }
-      const existingFiles = await getAllFiles();
-      const existingHashes = new Set(existingFiles.filter(f => !f.deleted).map(f => f.hash).filter(h => h && !h.startsWith('unique_')));
-      const sizesInDb = new Set(existingFiles.filter(f => !f.deleted).map(f => f.size || 0));
-      const pendingRecords = []; const FLUSH_SIZE = 100;
-      const flushPending = async () => { if (pendingRecords.length === 0) return; const batch = pendingRecords.splice(0); await new Promise((res, rej) => { const tx = db.transaction(SF, 'readwrite'); const store = tx.objectStore(SF); for (const r of batch) store.add(r); tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); }); };
-      let imported = 0, skipped = 0, failed = 0; let lastYield = Date.now(); const importedFiles = [];
-      for (let i = 0; i < mediaEntries.length; i++) {
-        checkAbort(); const entry = mediaEntries[i]; const fileName = entry.name.split('/').pop();
-        try {
-          const parts = entry.name.split('/'); parts.pop(); const folderPath = parts.join('/'); const targetFolderId = folderPath ? folderMap.get(folderPath) : currentFolder;
-          const ext = fileName.split('.').pop().toLowerCase(); const mime = ARCHIVE_MIME_MAP[ext] || '';
-          const fileId = generateId();
-          await extractEntryToOPFS(zipInfo, entry, fileId);
-          let hash = ''; let isDuplicate = false;
-          if (sizesInDb.has(entry.uncompSize)) { const fileObj = await getFromOPFS(fileId); try { hash = await calculateHash(fileObj); } catch(e) {} if (hash && existingHashes.has(hash)) isDuplicate = true; }
-          if (isDuplicate) { await deleteFromOPFS(fileId); skipped++; }
-          else {
-            const fileObj = await getFromOPFS(fileId); const type = detectType(fileObj);
-            const exifDate = (type === 'image' && fileObj) ? await extractExifDate(fileObj) : null;
-            const record = { fileId, name: fileName, type, mime, size: entry.uncompSize, date: exifDate || Date.now(), importedAt: Date.now(), folderId: targetFolderId, hash, deleted: false, deletedAt: null, fav: false, tags: [] };
-            pendingRecords.push(record); importedFiles.push(record);
-            if (hash && !hash.startsWith('unique_')) existingHashes.add(hash);
-            sizesInDb.add(entry.uncompSize); imported++;
-            if (pendingRecords.length >= FLUSH_SIZE) await flushPending();
-          }
-        } catch (err) { failed++; }
-        const now = Date.now();
-        if (now - lastYield > 200 || i === mediaEntries.length - 1) { lastYield = now; const eta = formatEta(i + 1, mediaEntries.length, performance.now() - t0); showProgress('Импорт', 5 + Math.round(((i + 1) / mediaEntries.length) * 90), `${i + 1}/${mediaEntries.length}: ${fileName}`, `✓${imported} · ⏭${skipped} · ✗${failed} · ${eta}`); await nextMacrotask(); }
-      }
-      await flushPending();
-      importedFiles.forEach(f => queueBgThumb(f));
-      const elapsed = (performance.now() - t0) / 1000; const totalMB = mediaEntries.reduce((s, e) => s + e.uncompSize, 0) / 1048576; const speed = elapsed > 0 ? totalMB / elapsed : 0;
-      hideProgress(); await refresh(); toast('Импорт завершён', `${imported} файл. за ${elapsed.toFixed(0)} сек · ${speed.toFixed(1)} МБ/с`);
-      return;
     }
-    if (!entries.length) { hideProgress(); toast('Пусто', 'Архив пуст', true); return; }
-    let metadataEntry = null;
-    for (const e of entries) if (e.name.endsWith('metadata.json')) { metadataEntry = e; break; }
-    if (metadataEntry) {
-      showProgress('Восстановление', 5, 'Разбор метаданных...', '', true); await nextMacrotask();
-      let metadata; try { metadata = JSON.parse(new TextDecoder().decode(metadataEntry.data)); } catch (e) { throw new Error('Неверный формат metadata.json'); }
-      if (!metadata || !metadata.files || !metadata.folders) throw new Error('Неверный формат резервной копии');
+    await scanDir(extractFolder);
+
+    // 4. Проверка на бэкап (metadata.json)
+    const metaFile = allFiles.find(f => f.name === 'metadata.json');
+    if (metaFile) {
+      showProgress('Восстановление', 0, 'Чтение метаданных...', '', true);
+      const metaData = await Filesystem.readFile({ path: metaFile.path, directory: Directory.Data });
+      const metadata = JSON.parse(atob(metaData.data));
+      
       hideProgress();
       if (!await showConfirm('Восстановление', 'Обнаружена полная резервная копия.<br><br>Все текущие данные будут <b>заменены</b>. Продолжить?', 'Восстановить', 'Отмена')) return;
+      
       await acquireWakeLock();
-      const basePath = metadataEntry.name.substring(0, metadataEntry.name.length - 'metadata.json'.length);
-      const entryMap = new Map(entries.map(e => [e.name, e]));
-      const totalFiles = metadata.files.length; let i = 0; let lastYieldRestore = Date.now();
+      const totalFiles = metadata.files.length; let i = 0;
       for (const f of metadata.files) {
         checkAbort();
         try {
-          const mainEntry = entryMap.get(basePath + `files/${f.fileId}`);
-          if (mainEntry && mainEntry.data && rootDir) { const fh = await rootDir.getFileHandle(f.fileId, { create: true }); const wr = await fh.createWritable(); const CHUNK = 4 * 1024 * 1024; const d = mainEntry.data; if (d.length <= CHUNK) await wr.write(d); else { for (let off = 0; off < d.length; off += CHUNK) await wr.write(d.subarray(off, Math.min(off + CHUNK, d.length))); } await wr.close(); }
-          const thumbEntry = entryMap.get(basePath + `thumbs/${f.fileId}`);
-          if (thumbEntry && thumbEntry.data && rootDir) { const fh = await rootDir.getFileHandle(THUMB_PREFIX + f.fileId, { create: true }); const wr = await fh.createWritable(); await wr.write(new Blob([thumbEntry.data])); await wr.close(); }
-        } catch (e) {}
-        i++; const nowR = Date.now();
-        if (nowR - lastYieldRestore > 150 || i === totalFiles) { lastYieldRestore = nowR; showProgress('Восстановление', 10 + Math.round((i / totalFiles) * 80), f.name || `Файл ${i}`, `${i}/${totalFiles}`); await nextMacrotask(); }
+          const mainEntry = allFiles.find(x => x.name === f.fileId && x.path.includes('/files/'));
+          if (mainEntry && rootDir) {
+            const { uri } = await Filesystem.getUri({ path: mainEntry.path, directory: Directory.Data });
+            const res = await fetch(Capacitor.convertFileSrc(uri));
+            const blob = await res.blob();
+            const fh = await rootDir.getFileHandle(f.fileId, { create: true });
+            const wr = await fh.createWritable();
+            await blob.stream().pipeTo(wr);
+          }
+          const thumbEntry = allFiles.find(x => x.name === f.fileId && x.path.includes('/thumbs/'));
+          if (thumbEntry && rootDir) {
+            const { uri } = await Filesystem.getUri({ path: thumbEntry.path, directory: Directory.Data });
+            const res = await fetch(Capacitor.convertFileSrc(uri));
+            const blob = await res.blob();
+            const fh = await rootDir.getFileHandle(THUMB_PREFIX + f.fileId, { create: true });
+            const wr = await fh.createWritable();
+            await wr.write(blob); await wr.close();
+          }
+        } catch(e) { console.warn(e); }
+        i++;
+        showProgress('Восстановление', 10 + Math.round((i/totalFiles)*80), f.name || `Файл ${i}`, `${i}/${totalFiles}`);
       }
-      showProgress('Восстановление', 92, 'База данных...', '', true); await nextMacrotask();
+      
+      showProgress('Восстановление', 92, 'База данных...', '', true);
       const t1 = db.transaction(SF, 'readwrite'); t1.objectStore(SF).clear(); await new Promise((res, rej) => { t1.oncomplete = res; t1.onerror = e => rej(e.target.error); });
       const t2 = db.transaction(SFL, 'readwrite'); t2.objectStore(SFL).clear(); await new Promise((res, rej) => { t2.oncomplete = res; t2.onerror = e => rej(e.target.error); });
       const t3 = db.transaction(SS, 'readwrite'); t3.objectStore(SS).clear(); await new Promise((res, rej) => { t3.oncomplete = res; t3.onerror = e => rej(e.target.error); });
       const t4 = db.transaction(SF, 'readwrite'); const s4 = t4.objectStore(SF); metadata.files.forEach(f => s4.put(f)); await new Promise((res, rej) => { t4.oncomplete = res; t4.onerror = e => rej(e.target.error); });
       const t5 = db.transaction(SFL, 'readwrite'); const s5 = t5.objectStore(SFL); metadata.folders.forEach(f => s5.put(f)); await new Promise((res, rej) => { t5.oncomplete = res; t5.onerror = e => rej(e.target.error); });
       if (metadata.settings && metadata.settings.length) { const t6 = db.transaction(SS, 'readwrite'); const s6 = t6.objectStore(SS); metadata.settings.forEach(s => s6.put(s)); await new Promise((res, rej) => { t6.oncomplete = res; t6.onerror = e => rej(e.target.error); }); }
-      settingsCache = null; hideProgress(); toast('Готово', `Восстановлено ${totalFiles} файлов. Перезагрузка...`);
+      
+      settingsCache = null; hideProgress(); toast('Готово', 'Восстановление завершено. Перезагрузка...');
       setTimeout(() => location.reload(), 1500); return;
     }
-    const mediaEntries = entries.filter(e => { if (!e.name || e.name.endsWith('/')) return false; if (!e.data || e.data.length === 0) return false; const parts = e.name.split('/'); if (parts.some(p => p.startsWith('__MACOSX') || p.startsWith('.'))) return false; const m = e.name.match(/\.([a-z0-9]+)$/i); return m && ARCHIVE_MIME_MAP[m[1].toLowerCase()] !== undefined; });
-    if (mediaEntries.length === 0) { hideProgress(); toast('Пусто', 'В архиве не найдено фото или видео', true); return; }
+
+    // 5. Импорт медиа
+    const mediaFiles = allFiles.filter(f => {
+      const ext = f.name.split('.').pop().toLowerCase();
+      return ARCHIVE_MIME_MAP[ext] !== undefined;
+    });
+
+    if (!mediaFiles.length) { hideProgress(); toast('Пусто', 'Не найдено медиафайлов', true); return; }
     hideProgress();
-    if (!await showConfirm('Импорт из ZIP-архива', `Найдено <b>${mediaEntries.length}</b> медиафайлов.<br><br>Импортировать с сохранением структуры папок?`, 'Импортировать', 'Отмена')) return;
-    await acquireWakeLock(); showProgress('Импорт', 3, 'Создание папок...', '', true); await nextMacrotask();
+    if (!await showConfirm('Импорт', `Найдено <b>${mediaFiles.length}</b> медиафайлов.<br><br>Начать импорт?`, 'Импортировать', 'Отмена')) return;
+    
+    await acquireWakeLock(); showProgress('Импорт', 3, 'Создание папок...', '', true);
+    
+    // Создание папок (адаптировано под нативные пути)
     const folderPaths = new Set();
-    mediaEntries.forEach(e => { const parts = e.name.split('/'); parts.pop(); for (let i = 1; i <= parts.length; i++) folderPaths.add(parts.slice(0, i).join('/')); });
+    mediaFiles.forEach(e => {
+      const parts = e.path.split('/'); 
+      parts.pop(); parts.shift(); // убираем имя файла и extractFolder
+      for (let i = 1; i <= parts.length; i++) folderPaths.add(parts.slice(0, i).join('/'));
+    });
+    
     const existingFolders = await getAllFolders(); const folderMap = new Map();
     const sortedPaths = [...folderPaths].sort((a, b) => a.split('/').length - b.split('/').length);
     for (const path of sortedPaths) {
+      if (!path) continue;
       const parts = path.split('/'); const name = parts[parts.length - 1];
       const parentPath = parts.slice(0, -1).join('/');
       const parentId = parentPath ? folderMap.get(parentPath) : currentFolder;
@@ -2199,39 +1985,68 @@ window.importFromArchive = async (input) => {
       else { folderId = await addFolder(name, parentId, FOLDER_COLORS[Math.floor(Math.random() * FOLDER_COLORS.length)]); existingFolders.push({ id: folderId, name, parentId: parentId ?? null, deleted: false }); }
       folderMap.set(path, folderId);
     }
+
     const existingFiles = await getAllFiles();
     const existingHashes = new Set(existingFiles.filter(f => !f.deleted).map(f => f.hash).filter(h => h && !h.startsWith('unique_')));
     const sizesInDb = new Set(existingFiles.filter(f => !f.deleted).map(f => f.size || 0));
-    let imported = 0, skipped = 0, failed = 0; const pendingRecords = []; const importedFiles = []; const FLUSH_SIZE = 100; let lastYield = Date.now();
+    const pendingRecords = []; const importedFiles = []; const FLUSH_SIZE = 100; let lastYield = Date.now();
     const flushBatch = async () => { if (pendingRecords.length === 0) return; const batch = pendingRecords.splice(0); await new Promise((res, rej) => { const tx = db.transaction(SF, 'readwrite'); const store = tx.objectStore(SF); for (const r of batch) store.add(r); tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); }); };
-    for (let i = 0; i < mediaEntries.length; i++) {
-      checkAbort(); const entry = mediaEntries[i]; const fileName = entry.name.split('/').pop();
+    
+    let imported = 0, skipped = 0, failed = 0;
+
+    for (let i = 0; i < mediaFiles.length; i++) {
+      checkAbort(); const nf = mediaFiles[i]; const fileName = nf.name;
       try {
-        const parts = entry.name.split('/'); parts.pop(); const folderPath = parts.join('/'); const targetFolderId = folderPath ? folderMap.get(folderPath) : currentFolder;
+        const parts = nf.path.split('/'); parts.pop(); parts.shift(); 
+        const folderPath = parts.join('/'); 
+        const targetFolderId = folderPath ? folderMap.get(folderPath) : currentFolder;
+        
         const ext = fileName.split('.').pop().toLowerCase(); const mime = ARCHIVE_MIME_MAP[ext] || '';
-        const fileObj = new File([entry.data], fileName, { type: mime });
+        
+        const { uri } = await Filesystem.getUri({ path: nf.path, directory: Directory.Data });
+        const response = await fetch(Capacitor.convertFileSrc(uri));
+        const blob = await response.blob();
+
         let hash = ''; let isDuplicate = false;
-        if (sizesInDb.has(entry.data.length)) { try { hash = await calculateHash(fileObj); } catch(e) {} if (hash && existingHashes.has(hash)) isDuplicate = true; }
+        if (sizesInDb.has(blob.size)) { try { hash = await calculateHash(blob); } catch(e) {} if (hash && existingHashes.has(hash)) isDuplicate = true; }
+        
         if (isDuplicate) { skipped++; }
         else {
-          const fileId = generateId(); const type = detectType(fileObj);
-          const exifDate = (type === 'image') ? await extractExifDate(fileObj) : null;
-          const record = { fileId, name: fileName, type, mime, size: entry.data.length, date: exifDate || Date.now(), importedAt: Date.now(), folderId: targetFolderId, hash, deleted: false, deletedAt: null, fav: false, tags: [] };
-          if (rootDir) { const ok = await writeDataToOPFS(fileId, entry.data); if (!ok) failed++; else { pendingRecords.push(record); importedFiles.push(record); if (hash && !hash.startsWith('unique_')) existingHashes.add(hash); sizesInDb.add(entry.data.length); imported++; if (pendingRecords.length >= FLUSH_SIZE) await flushBatch(); } }
-          else { record.blob = fileObj; pendingRecords.push(record); importedFiles.push(record); if (hash && !hash.startsWith('unique_')) existingHashes.add(hash); sizesInDb.add(entry.data.length); imported++; if (pendingRecords.length >= FLUSH_SIZE) await flushBatch(); }
+          const fileId = generateId(); const type = detectType(blob);
+          const exifDate = (type === 'image') ? await extractExifDate(blob) : null;
+          const record = { fileId, name: fileName, type, mime, size: blob.size, date: exifDate || Date.now(), importedAt: Date.now(), folderId: targetFolderId, hash, deleted: false, deletedAt: null, fav: false, tags: [] };
+          
+          if (rootDir) { 
+            const fh = await rootDir.getFileHandle(fileId, { create: true });
+            const wr = await fh.createWritable();
+            await blob.stream().pipeTo(wr); 
+            pendingRecords.push(record); importedFiles.push(record); 
+            if (hash && !hash.startsWith('unique_')) existingHashes.add(hash); sizesInDb.add(blob.size); imported++; 
+            if (pendingRecords.length >= FLUSH_SIZE) await flushBatch(); 
+          }
         }
       } catch (err) { failed++; }
+      
       const now = Date.now();
-      if (now - lastYield > 150 || i === mediaEntries.length - 1) { lastYield = now; const eta = formatEta(i + 1, mediaEntries.length, performance.now() - t0); showProgress('Импорт', 5 + Math.round(((i + 1) / mediaEntries.length) * 90), `${i + 1}/${mediaEntries.length}: ${fileName}`, `✓${imported} · ⏭${skipped} · ✗${failed} · ${eta}`); await nextMacrotask(); }
+      if (now - lastYield > 150 || i === mediaFiles.length - 1) { lastYield = now; const eta = formatEta(i + 1, mediaFiles.length, performance.now() - t0); showProgress('Импорт', 5 + Math.round(((i + 1) / mediaFiles.length) * 90), `${i + 1}/${mediaFiles.length}: ${fileName}`, `✓${imported} · ⏭${skipped} · ✗${failed} · ${eta}`); await nextMacrotask(); }
     }
+    
     await flushBatch();
     importedFiles.forEach(f => queueBgThumb(f));
-    const elapsed = (performance.now() - t0) / 1000; const totalMB = mediaEntries.reduce((s, e) => s + e.data.length, 0) / 1048576; const speed = elapsed > 0 ? totalMB / elapsed : 0;
-    hideProgress(); await refresh(); toast('Импорт завершён', `${imported} файл. за ${elapsed.toFixed(0)} сек · ${speed.toFixed(1)} МБ/с · пропущено ${skipped}`);
+    hideProgress(); await refresh(); toast('Импорт завершён', `${imported} файл. за ${((performance.now() - t0) / 1000).toFixed(0)} сек`);
+
   } catch (e) {
     hideProgress(); if (e.message === 'Отменено пользователем') toast('Отменено', 'Импорт остановлен'); else toast('Ошибка', e.message || 'Не удалось обработать архив', true);
-  } finally { endAbortableOperation(); releaseWakeLock(); }
+  } finally {
+    // Очистка временных файлов
+    try { await Filesystem.deleteFile({ path: tempZipPath, directory: Directory.Cache }); } catch(e){}
+    try { await Filesystem.rmdir({ path: extractFolder, directory: Directory.Data, recursive: true }); } catch(e){}
+    endAbortableOperation(); releaseWakeLock();
+  }
 };
+// ==========================================
+// КОНЕЦ НОВОЙ ФУНКЦИИ ИМПОРТА ZIP
+// ==========================================
 
 $('archiveImportFile').onchange = function () { if (this.files && this.files[0]) importFromArchive(this); };
 
