@@ -251,7 +251,7 @@ async function createOutputStream(filename) {
       const path = `export_${Date.now()}_${safeName}`;
       const directory = 'DOCUMENTS';
       try { await Filesystem.deleteFile({ path, directory }); } catch(e) {}
-      let buffer = [], bufferSize = 0; const TARGET = 4 * 1024 * 1024;
+      let buffer = [], bufferSize = 0; const TARGET = 2 * 1024 * 1024;
       let isFirst = true, writeChain = Promise.resolve(), bytesWritten = 0, aborted = false;
       const flush = async (force = false) => {
         if (aborted || bufferSize === 0) return; if (!force && bufferSize < TARGET) return;
@@ -476,7 +476,7 @@ async function extractEntryToOPFS(zipInfo, entry, fileId) {
         const end = Math.min(off + CHUNK, total);
         await writable.write(zipInfo.file.slice(dataStart + off, dataStart + end));
         off = end;
-        if (Date.now() - lastYield > 150) { await nextMacrotask(); lastYield = Date.now(); }
+        if (Date.now() - lastYield > 500) { await nextMacrotask(); lastYield = Date.now(); }
       }
     } else if (entry.method === 8) {
       const ds = new DecompressionStream('deflate-raw');
@@ -487,7 +487,7 @@ async function extractEntryToOPFS(zipInfo, entry, fileId) {
           const chunkEnd = Math.min(offset + CHUNK, end);
           const buf = new Uint8Array(await zipInfo.file.slice(offset, chunkEnd).arrayBuffer());
           await dsWriter.write(buf); offset = chunkEnd;
-          if (Date.now() - lastYield > 150) { await nextMacrotask(); lastYield = Date.now(); }
+          if (Date.now() - lastYield > 500) { await nextMacrotask(); lastYield = Date.now(); }
         }
         await dsWriter.close();
       })();
@@ -503,7 +503,7 @@ async function extractEntryToOPFS(zipInfo, entry, fileId) {
           const { done, value } = await dsReader.read();
           if (done) break;
           parts.push(value); partsSize += value.length;
-          if (partsSize >= CHUNK) { await flushParts(); if (Date.now() - lastYield > 150) { await nextMacrotask(); lastYield = Date.now(); } }
+          if (partsSize >= CHUNK) { await flushParts(); if (Date.now() - lastYield > 500) { await nextMacrotask(); lastYield = Date.now(); } }
         }
         await flushParts(); await writePromise;
       } catch (e) { try { await dsWriter.abort(); } catch(_) {} throw e; }
@@ -2051,7 +2051,7 @@ window.importFromArchive = async (input) => {
   showProgress('Импорт', 0, 'Чтение архива...', `${(file.size / 1048576).toFixed(0)} МБ`, true);
   await nextMacrotask();
   try {
-    const RAM_LIMIT = 3.0 * 1024 * 1024 * 1024;
+    const RAM_LIMIT = 512 * 1024 * 1024;
     let entries = null, isStreamingMode = false, zipInfo = null;
     if (file.size <= RAM_LIMIT) { try { entries = await parseZip(file); } catch (oomErr) { isStreamingMode = true; } }
     else isStreamingMode = true;
@@ -2076,10 +2076,16 @@ window.importFromArchive = async (input) => {
             const mainEntry = entryMap.get(basePath + `files/${f.fileId}`);
             if (mainEntry && rootDir) await extractEntryToOPFS(zipInfo, mainEntry, f.fileId);
             const thumbEntry = entryMap.get(basePath + `thumbs/${f.fileId}`);
-            if (thumbEntry && rootDir) { const thumbData = await extractEntryToBuffer(zipInfo, thumbEntry); const fh = await rootDir.getFileHandle(THUMB_PREFIX + f.fileId, { create: true }); const wr = await fh.createWritable(); await wr.write(new Blob([thumbData])); await wr.close(); }
+            if (thumbEntry && thumbEntry.uncompSize >= 1024 && rootDir) {
+              const thumbData = await extractEntryToBuffer(zipInfo, thumbEntry);
+              if (thumbData.length >= 1024) {
+                const fh = await rootDir.getFileHandle(THUMB_PREFIX + f.fileId, { create: true });
+                const wr = await fh.createWritable(); await wr.write(new Blob([thumbData])); await wr.close();
+              }
+            }
           } catch (e) { console.warn('Restore failed', f.name, e); }
           i++; const nowR = Date.now();
-          if (nowR - lastYieldRestore > 150 || i === totalFiles) { lastYieldRestore = nowR; showProgress('Восстановление', 10 + Math.round((i / totalFiles) * 80), f.name || `Файл ${i}`, `${i}/${totalFiles}`); await nextMacrotask(); }
+          if (nowR - lastYieldRestore > 500 || i === totalFiles) { lastYieldRestore = nowR; showProgress('Восстановление', 10 + Math.round((i / totalFiles) * 80), f.name || `Файл ${i}`, `${i}/${totalFiles}`); await nextMacrotask(); }
         }
         showProgress('Восстановление', 92, 'База данных...', '', true); await nextMacrotask();
         const t1 = db.transaction(SF, 'readwrite'); t1.objectStore(SF).clear(); await new Promise((res, rej) => { t1.oncomplete = res; t1.onerror = e => rej(e.target.error); });
@@ -2138,7 +2144,7 @@ window.importFromArchive = async (input) => {
           }
         } catch (err) { failed++; }
         const now = Date.now();
-        if (now - lastYield > 200 || i === mediaEntries.length - 1) { lastYield = now; const eta = formatEta(i + 1, mediaEntries.length, performance.now() - t0); showProgress('Импорт', 5 + Math.round(((i + 1) / mediaEntries.length) * 90), `${i + 1}/${mediaEntries.length}: ${fileName}`, `✓${imported} · ⏭${skipped} · ✗${failed} · ${eta}`); await nextMacrotask(); }
+        if (now - lastYield > 400 || i === mediaEntries.length - 1) { lastYield = now; const eta = formatEta(i + 1, mediaEntries.length, performance.now() - t0); showProgress('Импорт', 5 + Math.round(((i + 1) / mediaEntries.length) * 90), `${i + 1}/${mediaEntries.length}: ${fileName}`, `✓${imported} · ⏭${skipped} · ✗${failed} · ${eta}`); await nextMacrotask(); }
       }
       await flushPending();
       importedFiles.forEach(f => queueBgThumb(f));
@@ -2165,10 +2171,10 @@ window.importFromArchive = async (input) => {
           const mainEntry = entryMap.get(basePath + `files/${f.fileId}`);
           if (mainEntry && mainEntry.data && rootDir) { const fh = await rootDir.getFileHandle(f.fileId, { create: true }); const wr = await fh.createWritable(); const CHUNK = 4 * 1024 * 1024; const d = mainEntry.data; if (d.length <= CHUNK) await wr.write(d); else { for (let off = 0; off < d.length; off += CHUNK) await wr.write(d.subarray(off, Math.min(off + CHUNK, d.length))); } await wr.close(); }
           const thumbEntry = entryMap.get(basePath + `thumbs/${f.fileId}`);
-          if (thumbEntry && thumbEntry.data && rootDir) { const fh = await rootDir.getFileHandle(THUMB_PREFIX + f.fileId, { create: true }); const wr = await fh.createWritable(); await wr.write(new Blob([thumbEntry.data])); await wr.close(); }
+          if (thumbEntry && thumbEntry.data && thumbEntry.data.length >= 1024 && rootDir) { const fh = await rootDir.getFileHandle(THUMB_PREFIX + f.fileId, { create: true }); const wr = await fh.createWritable(); await wr.write(new Blob([thumbEntry.data])); await wr.close(); }
         } catch (e) {}
         i++; const nowR = Date.now();
-        if (nowR - lastYieldRestore > 150 || i === totalFiles) { lastYieldRestore = nowR; showProgress('Восстановление', 10 + Math.round((i / totalFiles) * 80), f.name || `Файл ${i}`, `${i}/${totalFiles}`); await nextMacrotask(); }
+        if (nowR - lastYieldRestore > 500 || i === totalFiles) { lastYieldRestore = nowR; showProgress('Восстановление', 10 + Math.round((i / totalFiles) * 80), f.name || `Файл ${i}`, `${i}/${totalFiles}`); await nextMacrotask(); }
       }
       showProgress('Восстановление', 92, 'База данных...', '', true); await nextMacrotask();
       const t1 = db.transaction(SF, 'readwrite'); t1.objectStore(SF).clear(); await new Promise((res, rej) => { t1.oncomplete = res; t1.onerror = e => rej(e.target.error); });
@@ -2222,7 +2228,7 @@ window.importFromArchive = async (input) => {
         }
       } catch (err) { failed++; }
       const now = Date.now();
-      if (now - lastYield > 150 || i === mediaEntries.length - 1) { lastYield = now; const eta = formatEta(i + 1, mediaEntries.length, performance.now() - t0); showProgress('Импорт', 5 + Math.round(((i + 1) / mediaEntries.length) * 90), `${i + 1}/${mediaEntries.length}: ${fileName}`, `✓${imported} · ⏭${skipped} · ✗${failed} · ${eta}`); await nextMacrotask(); }
+      if (now - lastYield > 400 || i === mediaEntries.length - 1) { lastYield = now; const eta = formatEta(i + 1, mediaEntries.length, performance.now() - t0); showProgress('Импорт', 5 + Math.round(((i + 1) / mediaEntries.length) * 90), `${i + 1}/${mediaEntries.length}: ${fileName}`, `✓${imported} · ⏭${skipped} · ✗${failed} · ${eta}`); await nextMacrotask(); }
     }
     await flushBatch();
     importedFiles.forEach(f => queueBgThumb(f));
