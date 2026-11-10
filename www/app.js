@@ -1,3 +1,5 @@
+import { FilePicker } from '@capawesome/capacitor-file-picker';
+
 const DB_NAME='MediaVault_Final', DB_VERSION=33;
 const SF='files', SFL='folders', SS='settings';
 const THUMB_PREFIX = 'thumb_';
@@ -1852,46 +1854,45 @@ window.exportAllData = async () => {
 const ARCHIVE_MIME_MAP = { jpg:'image/jpeg', jpeg:'image/jpeg', png:'image/png', webp:'image/webp', bmp:'image/bmp', heic:'image/heic', heif:'image/heif', avif:'image/avif', mp4:'video/mp4', webm:'video/webm', mov:'video/quicktime', avi:'video/x-msvideo', mkv:'video/x-matroska', m4v:'video/x-m4v', '3gp':'video/3gpp', flv:'video/x-flv', wmv:'video/x-ms-wmv' };
 
 // ==========================================
-// НАЧАЛО НОВОЙ ФУНКЦИИ ИМПОРТА ZIP (НАТИВНАЯ)
+// НОВЫЙ БЫСТРЫЙ ИМПОРТ ZIP (БЕЗ BASE64)
 // ==========================================
-window.importFromArchive = async (input) => {
-  const file = input.files[0]; if (!file) return; input.value = '';
+window.importNativeZip = async () => {
   const t0 = performance.now();
-  if (!await checkFreeSpace(file.size * 1.2, 'Импорт')) return;
-  startAbortableOperation('import', 'Импорт');
-  showProgress('Импорт', 0, 'Подготовка архива...', '', true);
-  
-  const { Filesystem, Directory, CapacitorZip } = window.Capacitor.Plugins;
-  const tempZipPath = `temp_zip_${Date.now()}.zip`;
-  const extractFolder = `temp_extract_${Date.now()}`;
-  let savedZipUri = '';
+  let extractFolder = '';
 
   try {
-    // 1. Сохраняем ZIP в кэш (чанками, чтобы не было OOM)
-    await writeBlobToCacheChunked(file, tempZipPath, (pct) => {
-       showProgress('Импорт', Math.round(pct * 20), 'Сохранение архива...', '');
+    // 1. Открываем системный проводник Android
+    const result = await FilePicker.pickFiles({
+      types: ['application/zip', 'application/x-zip-compressed', 'application/octet-stream'],
+      readData: false // САМОЕ ВАЖНОЕ: мы не читаем файл в память JS!
     });
-    
-    const { uri } = await Filesystem.getUri({ path: tempZipPath, directory: Directory.Cache });
-    savedZipUri = uri;
 
-    showProgress('Импорт', 20, 'Распаковка (нативно)...', '', true);
+    if (!result.files || result.files.length === 0) return; // Пользователь отменил выбор
+
+    const fileUri = result.files[0].path; // Прямой путь вида content://...
     
-    // 2. Нативная распаковка
+    startAbortableOperation('import', 'Импорт');
+    showProgress('Импорт', 0, 'Нативная распаковка...', '', true);
+
+    const { Filesystem, Directory, CapacitorZip } = window.Capacitor.Plugins;
+    extractFolder = `temp_extract_${Date.now()}`;
+
+    // 2. Слушатель прогресса нативного плагина
     const progressListener = await CapacitorZip.addListener('progress', (event) => {
       const percent = Math.round(event.progress * 100);
-      showProgress('Импорт', 20 + Math.round(percent * 0.3), `Распаковка: ${percent}%`, '');
+      showProgress('Импорт', Math.round(percent * 0.5), `Распаковка: ${percent}%`, '');
     });
 
+    // 3. Запускаем НАТИВНУЮ распаковку напрямую из проводника
     await CapacitorZip.unzip({
-      source: savedZipUri,
-      destination: extractFolder // Извлечет в Directory.Data/extractFolder
+      source: fileUri,
+      destination: extractFolder
     });
     
     progressListener.remove();
     showProgress('Импорт', 50, 'Анализ файлов...', '', true);
 
-    // 3. Собираем список распакованных файлов
+    // 4. Собираем список распакованных файлов
     const allFiles = [];
     async function scanDir(path) {
         const res = await Filesystem.readdir({ path, directory: Directory.Data });
@@ -1902,7 +1903,7 @@ window.importFromArchive = async (input) => {
     }
     await scanDir(extractFolder);
 
-    // 4. Проверка на бэкап (metadata.json)
+    // 5. Проверка на бэкап (metadata.json)
     const metaFile = allFiles.find(f => f.name === 'metadata.json');
     if (metaFile) {
       showProgress('Восстановление', 0, 'Чтение метаданных...', '', true);
@@ -1952,7 +1953,7 @@ window.importFromArchive = async (input) => {
       setTimeout(() => location.reload(), 1500); return;
     }
 
-    // 5. Импорт медиа
+    // 6. Импорт обычных медиа
     const mediaFiles = allFiles.filter(f => {
       const ext = f.name.split('.').pop().toLowerCase();
       return ARCHIVE_MIME_MAP[ext] !== undefined;
@@ -1962,13 +1963,12 @@ window.importFromArchive = async (input) => {
     hideProgress();
     if (!await showConfirm('Импорт', `Найдено <b>${mediaFiles.length}</b> медиафайлов.<br><br>Начать импорт?`, 'Импортировать', 'Отмена')) return;
     
-    await acquireWakeLock(); showProgress('Импорт', 3, 'Создание папок...', '', true);
+    await acquireWakeLock(); showProgress('Импорт', 50, 'Создание папок...', '', true);
     
-    // Создание папок (адаптировано под нативные пути)
     const folderPaths = new Set();
     mediaFiles.forEach(e => {
       const parts = e.path.split('/'); 
-      parts.pop(); parts.shift(); // убираем имя файла и extractFolder
+      parts.pop(); parts.shift(); 
       for (let i = 1; i <= parts.length; i++) folderPaths.add(parts.slice(0, i).join('/'));
     });
     
@@ -2025,10 +2025,15 @@ window.importFromArchive = async (input) => {
             if (pendingRecords.length >= FLUSH_SIZE) await flushBatch(); 
           }
         }
-      } catch (err) { failed++; }
+      } catch (err) { console.warn('Import file error', err); failed++; }
       
       const now = Date.now();
-      if (now - lastYield > 150 || i === mediaFiles.length - 1) { lastYield = now; const eta = formatEta(i + 1, mediaFiles.length, performance.now() - t0); showProgress('Импорт', 5 + Math.round(((i + 1) / mediaFiles.length) * 90), `${i + 1}/${mediaFiles.length}: ${fileName}`, `✓${imported} · ⏭${skipped} · ✗${failed} · ${eta}`); await nextMacrotask(); }
+      if (now - lastYield > 150 || i === mediaFiles.length - 1) { 
+        lastYield = now; 
+        const eta = formatEta(i + 1, mediaFiles.length, performance.now() - t0); 
+        showProgress('Импорт', 50 + Math.round(((i + 1) / mediaFiles.length) * 48), `${i + 1}/${mediaFiles.length}: ${fileName}`, `✓${imported} · ⏭${skipped} · ✗${failed} · ${eta}`); 
+        await nextMacrotask(); 
+      }
     }
     
     await flushBatch();
@@ -2036,19 +2041,19 @@ window.importFromArchive = async (input) => {
     hideProgress(); await refresh(); toast('Импорт завершён', `${imported} файл. за ${((performance.now() - t0) / 1000).toFixed(0)} сек`);
 
   } catch (e) {
-    hideProgress(); if (e.message === 'Отменено пользователем') toast('Отменено', 'Импорт остановлен'); else toast('Ошибка', e.message || 'Не удалось обработать архив', true);
+    hideProgress(); 
+    if (e.message === 'Отменено пользователем') toast('Отменено', 'Импорт остановлен'); 
+    else toast('Ошибка', e.message || 'Не удалось обработать архив', true);
   } finally {
-    // Очистка временных файлов
-    try { await Filesystem.deleteFile({ path: tempZipPath, directory: Directory.Cache }); } catch(e){}
-    try { await Filesystem.rmdir({ path: extractFolder, directory: Directory.Data, recursive: true }); } catch(e){}
+    if (extractFolder) {
+      try { await window.Capacitor.Plugins.Filesystem.rmdir({ path: extractFolder, directory: window.Capacitor.Plugins.Directory.Data, recursive: true }); } catch(e){}
+    }
     endAbortableOperation(); releaseWakeLock();
   }
 };
 // ==========================================
-// КОНЕЦ НОВОЙ ФУНКЦИИ ИМПОРТА ZIP
+// КОНЕЦ НОВОГО ИМПОРТА ZIP
 // ==========================================
-
-$('archiveImportFile').onchange = function () { if (this.files && this.files[0]) importFromArchive(this); };
 
 let ckTarget = null, ckLayout = 'ru', ckShift = false, ckNumeric = false;
 const CK_LAYOUTS = {
