@@ -106,10 +106,9 @@
       <button id="ctxClose"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
     </div>
   </div>
-  <div class="ctx-grid" id="ctxRow1">
+  <div class="ctx-grid" id="ctxRow1" style="grid-template-columns:repeat(3,1fr);">
     <button class="ctx-item" id="ctxRename"><div class="ctx-icon"><svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg></div><span class="ctx-label">Имя</span></button>
     <button class="ctx-item" id="ctxMove"><div class="ctx-icon"><svg viewBox="0 0 24 24"><path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-6 12v-3H9v-2h5v-3l4 4-4 4z"/></svg></div><span class="ctx-label">В папку</span></button>
-    <button class="ctx-item" id="ctxCopy"><div class="ctx-icon"><svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg></div><span class="ctx-label">Копировать</span></button>
     <button class="ctx-item" id="ctxInfo"><div class="ctx-icon"><svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg></div><span class="ctx-label">Свойства</span></button>
   </div>
   <div class="ctx-grid" id="ctxRow2">
@@ -148,7 +147,9 @@
       <div class="list-item" data-sort="date_desc" onclick="setSort('date_desc')" style="padding:16px;cursor:pointer;border-bottom:1px solid var(--bd);">Сначала новые</div>
       <div class="list-item" data-sort="date_asc" onclick="setSort('date_asc')" style="padding:16px;cursor:pointer;border-bottom:1px solid var(--bd);">Сначала старые</div>
       <div class="list-item" data-sort="size_desc" onclick="setSort('size_desc')" style="padding:16px;cursor:pointer;border-bottom:1px solid var(--bd);">Сначала тяжелые</div>
-      <div class="list-item" data-sort="size_asc" onclick="setSort('size_asc')" style="padding:16px;cursor:pointer;">Сначала легкие</div>
+      <div class="list-item" data-sort="size_asc" onclick="setSort('size_asc')" style="padding:16px;cursor:pointer;border-bottom:1px solid var(--bd);">Сначала легкие</div>
+      <div class="list-item" data-sort="added_asc" onclick="setSort('added_asc')" style="padding:16px;cursor:pointer;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:10px;"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--acc);"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>По порядку добавления</div>
+      <div class="list-item" data-sort="added_desc" onclick="setSort('added_desc')" style="padding:16px;cursor:pointer;display:flex;align-items:center;gap:10px;"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--acc);"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>По порядку добавления (обратный)</div>
     </div>
   </div>
 </div>
@@ -169,16 +170,6 @@
         <div class="theme-grid">
           <div class="theme-item" data-t="dark" onclick="setTheme('dark')"><div class="theme-preview"><div class="theme-color" style="background:#08090c"></div><div class="theme-color" style="background:#a78bfa"></div></div><span>Тёмная</span></div>
           <div class="theme-item" data-t="light" onclick="setTheme('light')"><div class="theme-preview"><div class="theme-color" style="background:#fafafa"></div><div class="theme-color" style="background:#7c3aed"></div></div><span>Светлая</span></div>
-          <div class="theme-item" data-t="warm" onclick="setTheme('warm')"><div class="theme-preview"><div class="theme-color" style="background:#1a1612"></div><div class="theme-color" style="background:#e0a572"></div></div><span>Тёплая</span></div>
-          <div class="theme-item" data-t="sepia" onclick="setTheme('sepia')"><div class="theme-preview"><div class="theme-color" style="background:#f2ebe0"></div><div class="theme-color" style="background:#b07a4a"></div></div><span>Сепия</span></div>
-        </div>
-      </div>
-      <div class="settings-card">
-        <div class="settings-card-head with-divider"><div class="settings-icon-box"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg></div><div><div class="settings-card-title">Сетка</div><div class="settings-card-sub">Количество колонок</div></div></div>
-        <div class="pill-group">
-          <div class="pill font-opt" data-c="repeat(2, 1fr)" onclick="setCols('repeat(2, 1fr)')" style="flex:1;text-align:center;justify-content:center;border-radius:var(--r-md);padding:14px 10px;">2</div>
-          <div class="pill font-opt" data-c="repeat(3, 1fr)" onclick="setCols('repeat(3, 1fr)')" style="flex:1;text-align:center;justify-content:center;border-radius:var(--r-md);padding:14px 10px;">3</div>
-          <div class="pill font-opt" data-c="repeat(4, 1fr)" onclick="setCols('repeat(4, 1fr)')" style="flex:1;text-align:center;justify-content:center;border-radius:var(--r-md);padding:14px 10px;">4</div>
         </div>
       </div>
       <div class="settings-card">
@@ -216,7 +207,6 @@
       <div class="settings-group-title">Инструменты</div>
       <div class="settings-card">
         <button class="settings-btn" style="margin-top:0;" onclick="findDuplicates()"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>Найти дубликаты</button>
-        <button class="settings-btn" onclick="compactDB()"><svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></svg>Очистить мусор и сжать</button>
       </div>
     </div>
 
@@ -225,17 +215,6 @@
       <div class="settings-card">
         <div class="settings-row" style="padding-top:0;"><span>Медиафайлы</span><span id="storageFilesSize" style="font-weight:700;color:var(--acc);">...</span></div>
         <div class="settings-row"><span>Занято в системе</span><span id="storageUsage" style="font-weight:700;">...</span></div>
-      </div>
-    </div>
-
-    <div class="settings-group">
-      <div class="settings-group-title">Статистика</div>
-      <div class="settings-card">
-        <div class="settings-row" style="padding-top:0;"><span>Всего файлов</span><span id="statTotalFiles" style="font-weight:700;color:var(--acc);">0</span></div>
-        <div class="settings-row"><span>Фото / Видео</span><span id="statMediaFiles" style="font-weight:700;">0 / 0</span></div>
-        <div class="settings-row"><span>Папок</span><span id="statFolders" style="font-weight:700;">0</span></div>
-        <div class="settings-row"><span>В избранном</span><span id="statFavorites" style="font-weight:700;color:#fbbf24;">0</span></div>
-        <div class="settings-row"><span>В корзине</span><span id="statTrash" style="font-weight:700;color:var(--danger);">0</span></div>
       </div>
     </div>
 
@@ -261,7 +240,7 @@
       <div class="settings-group-title">О приложении</div>
       <div class="settings-card">
         <div class="settings-card-head with-divider"><div class="app-logo-badge"><svg viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2" ry="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/><circle cx="12" cy="16" r="1.2" fill="currentColor" stroke="none"/></svg></div><div><div class="settings-card-title">Krypta</div><div class="settings-card-sub">Локальная медиатека</div></div></div>
-        <div class="settings-row"><span>Версия</span><span class="version-badge">v1.0.4</span></div>
+        <div class="settings-row"><span>Версия</span><span class="version-badge">v1.0.5</span></div>
         <div class="settings-row" style="border-bottom:none;"><span>Режим</span><span style="font-weight:600;color:var(--mut);">Offline · OPFS</span></div>
         <a href="https://github.com/Ravi8O8/Krypta" onclick="openGithub(event)" rel="noopener noreferrer" class="settings-btn github-btn" style="margin-top:12px;"><svg class="github-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg><span>Открыть на GitHub</span></a>
       </div>
