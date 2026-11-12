@@ -805,7 +805,8 @@ function computeGridLayout() {
   const cols = 3;
   const sidePad = 16, topPad = 16, gap = 10;
   const contentWidth = width - sidePad * 2;
-  const ratio = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--tile-ratio')) || 1;
+  let ratio = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--tile-ratio'));
+  if (!ratio || isNaN(ratio) || ratio <= 0) ratio = 1;
   virtualState.cols = cols;
   const tileWidth = (contentWidth - gap * (cols - 1)) / cols;
   const tileHeight = tileWidth / ratio;
@@ -1248,10 +1249,15 @@ async function checkLock() {
     $('lockInput').value = '';
     $('lockErr').textContent = '';
   } else {
-    unlockApp();
+    await unlockApp();
   }
 }
-async function unlockApp() { isLocked = false; $('lockScreen').style.display = 'none'; virtualState.lastRange = [-1,-1]; refresh(); }
+async function unlockApp() { 
+  isLocked = false; 
+  $('lockScreen').style.display = 'none'; 
+  virtualState.lastRange = [-1,-1]; 
+  await refresh(); 
+}
 
 $('lockBtn').onclick = async () => {
   const val = $('lockInput').value; if(!val) return;
@@ -1262,7 +1268,7 @@ $('lockBtn').onclick = async () => {
       isLocked=false;
       $('lockScreen').style.display='none';
       virtualState.lastRange = [-1,-1];
-      refresh();
+      await refresh();
       playSound('success');
     }
     else { $('lockErr').textContent='Неверный PIN'; $('lockInput').value=''; playSound('error'); }
@@ -1327,6 +1333,7 @@ async function setAccentColor(hex) {
 }
 function buildAccentPalette() {
   const wrap = $('accentPalette');
+  if (!wrap) return;
   wrap.innerHTML = '';
   ACCENT_COLORS.forEach(c => {
     const el = document.createElement('div');
@@ -2520,6 +2527,7 @@ $('ckDoneBtn').addEventListener('pointerdown', (e) => { e.preventDefault(); play
 $('ckLangBtn').addEventListener('pointerdown', (e) => { e.preventDefault(); playSound('click'); ckLayout = (ckLayout === 'en') ? 'ru' : 'en'; ckShift = false; ckRender(); });
 $('ckModeBtn').addEventListener('pointerdown', (e) => { e.preventDefault(); playSound('click'); ckLayout = (ckLayout === 'num') ? 'ru' : 'num'; ckShift = false; ckRender(); });
 document.addEventListener('focusin', (e) => { const t = e.target; if (!ckIsTextInput(t)) return; if (t === ckTarget) return; ckShow(t); });
+$('lockInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('lockBtn').click(); } });
 document.addEventListener('pointerdown', (e) => { if (!ckTarget) return; if (e.target.closest('.ck')) return; if (e.target === ckTarget) return; if (ckIsTextInput(e.target)) return; ckHide(true); }, { passive: true });
 
 document.querySelectorAll('.modal:not(.custom-confirm) .box').forEach(box => {
@@ -2567,6 +2575,6 @@ function setupAndroidBackButton() {
     setTimeout(() => { autoCleanTrash().catch(()=>{}); }, 3000);
     setTimeout(() => { virtualState.lastRange = [-1,-1]; updateVirtualGrid(); }, 200);
   } catch(e) {
-    document.body.innerHTML = '<div style="padding:20px;text-align:center;color:red;">Ошибка базы данных.</div>';
+    document.body.innerHTML = '<div style="padding:20px;text-align:center;color:red;font-family:sans-serif;">Ошибка инициализации. Пожалуйста, очистите кэш приложения или переустановите его.<br><br><small>' + (e.message || e) + '</small></div>';
   }
 })();
