@@ -12,25 +12,10 @@ body[data-theme="light"] {
   --bd:#ececf0; --acc:#7c3aed; --acc-rgb:124,58,237;
   --danger:#ef4444; --danger-rgb:239,68,68;
 }
-body[data-theme="warm"] {
-  --bg:#1a1612; --bg-rgb:26,22,18;
-  --card:#252019; --card-rgb:37,32,25;
-  --txt:#ede3d0; --mut:#9a8a72;
-  --bd:#3a3128; --acc:#e0a572; --acc-rgb:224,165,114;
-  --danger:#e07856; --danger-rgb:224,120,86;
-}
-body[data-theme="sepia"] {
-  --bg:#f2ebe0; --bg-rgb:242,235,224;
-  --card:#faf6ee; --card-rgb:250,246,238;
-  --txt:#3a2f23; --mut:#8a7c68;
-  --bd:#e0d3bd; --acc:#b07a4a; --acc-rgb:176,122,74;
-  --danger:#c85a3e; --danger-rgb:200,90,62;
-}
 
 :root {
   --f-size:15px;
   --f-family:"Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
-  --cols:repeat(3, 1fr);
   --r-sm:10px;
   --r-md:14px;
   --r-lg:18px;
@@ -133,7 +118,7 @@ header {
 .tab.active[data-type="fav"] svg { fill: #fbbf24; }
 
 #gridWrap{position:relative;width:100%;}
-#grid{position:absolute;left:16px;right:16px;top:0;display:grid;grid-template-columns:var(--cols);gap:10px;touch-action:pan-y;}
+#grid{position:absolute;left:16px;right:16px;top:0;display:grid;grid-template-columns:repeat(3,1fr);gap:10px;touch-action:pan-y;}
 
 .tile {
   position:relative; aspect-ratio:1; border-radius:var(--r-lg); overflow:hidden;
@@ -307,8 +292,6 @@ body[data-view="trash"] #btnEmptyTrash{flex:1;}
 .theme-item.sel{border-color:var(--acc);}
 .theme-preview{width:100%;height:36px;border-radius:8px;display:flex;gap:2px;padding:2px;background:#000;overflow:hidden;}
 .theme-color{flex:1;border-radius:6px;}
-.font-opt{padding:16px;border:1px solid var(--bd);border-radius:var(--r-md);margin-bottom:8px;cursor:pointer;display:flex;justify-content:space-between;background:var(--card);font-weight:600;font-size:14px;}
-.font-opt.sel{border-color:var(--acc);color:var(--acc);background:color-mix(in srgb,var(--acc) 5%,transparent);}
 .opt-row{display:flex;align-items:center;justify-content:space-between;padding:16px 0;border-bottom:1px solid var(--bd);font-weight:500;}
 .opt-row:last-child{border-bottom:none;}
 
