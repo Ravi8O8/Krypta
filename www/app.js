@@ -72,7 +72,7 @@ let _foldersCache=null,_foldersCacheTime=0;
 function cacheGetPreview(map,key){const e=map.get(key);if(!e)return undefined;e.lastAccess=Date.now();return e.url;}
 function cacheSetPreview(map,key,url){map.set(key,{url,lastAccess:Date.now()});if(map.size>PREVIEW_CACHE_MAX){let oldestKey=null,oldestTime=Infinity;for(const [k,v] of map)if(v.lastAccess<oldestTime){oldestTime=v.lastAccess;oldestKey=k;}if(oldestKey!==null){const old=map.get(oldestKey);try{URL.revokeObjectURL(old.url);}catch(e){}map.delete(oldestKey);}}}
 function cacheRemovePreview(map,key){const e=map.get(key);if(e){try{URL.revokeObjectURL(e.url);}catch(_){}map.delete(key);}}
-function cacheClearAll(){for(const [,v] of filePreviewCache)try{URL.revokeObjectURL(v.url);}catch(e){}for(const [,v] of folderPreviewCache)try{URL.revokeObjectURL(v.url);}catch(e){}filePreviewCache.clear();folderPreviewCache.clear();}
+function cacheClearAll(){for(const [,v] of filePreviewCache)try{URL.revokeObjectURL(v.url);}catch(e){}for(const [,v] of folderPreviewCache)try{URL.revokeObjectURL(v.url);}catch(e){}filePreviewCache.clear();folderPreviewCache.clear();thumbFileCache.clear();}
 
 let virtualState={items:[],cols:3,rowHeight:0,paddingTop:16,lastRange:[-1,-1]};
 
@@ -595,9 +595,37 @@ async function generateVideoThumbnail(file,maxSize=300){
   });
 }
 
-async function saveThumb(fileId,blob){if(!rootDir||!blob)return;try{const fh=await rootDir.getFileHandle(THUMB_PREFIX+fileId,{create:true});const wr=await fh.createWritable();await wr.write(blob);await wr.close();}catch(e){}}
-async function getThumb(f){if(!rootDir)return null;try{const fh=await rootDir.getFileHandle(THUMB_PREFIX+f.fileId);return await fh.getFile();}catch(e){return null;}}
-async function deleteThumb(fileId){if(!rootDir)return;try{await rootDir.removeEntry(THUMB_PREFIX+fileId);}catch(e){}}
+const thumbFileCache=new Map();
+const THUMB_FILE_CACHE_MAX=400;
+
+async function saveThumb(fileId,blob){
+  if(!rootDir||!blob)return;
+  thumbFileCache.delete(fileId);
+  try{const fh=await rootDir.getFileHandle(THUMB_PREFIX+fileId,{create:true});const wr=await fh.createWritable();await wr.write(blob);await wr.close();}catch(e){}
+}
+async function getThumb(f){
+  if(!rootDir)return null;
+  const cached=thumbFileCache.get(f.fileId);
+  if(cached!==undefined)return cached;
+  try{
+    const fh=await rootDir.getFileHandle(THUMB_PREFIX+f.fileId);
+    const file=await fh.getFile();
+    if(thumbFileCache.size>=THUMB_FILE_CACHE_MAX){
+      const k=thumbFileCache.keys().next().value;
+      thumbFileCache.delete(k);
+    }
+    thumbFileCache.set(f.fileId,file);
+    return file;
+  }catch(e){
+    thumbFileCache.set(f.fileId,null);
+    return null;
+  }
+}
+async function deleteThumb(fileId){
+  thumbFileCache.delete(fileId);
+  if(!rootDir)return;
+  try{await rootDir.removeEntry(THUMB_PREFIX+fileId);}catch(e){}
+}
 
 function queueBgThumb(f){if(bgThumbQueue.find(x=>x.id===f.id))return;bgThumbQueue.push(f);processBgThumbQueue();}
 async function processBgThumbQueue(){
@@ -822,10 +850,29 @@ for(let i=startIndex;i<endIndex;i++){
 }
   grid.innerHTML='';
   grid.appendChild(frag);
-  for(const {el,item} of newTiles){
-    if(item._isFolder){if(folderPreviewEnabled)loadFolderPreview(item.id,el);}
-    else loadTileImage(el,item);
-  }
+
+  (async () => {
+    const PARALLEL = 6;
+    let idx = 0;
+    const worker = async () => {
+      while (idx < newTiles.length) {
+        const { el, item } = newTiles[idx++];
+        if (!el.isConnected) continue;
+        try {
+          if (item._isFolder) {
+            if (folderPreviewEnabled) await loadFolderPreview(item.id, el);
+          } else {
+            await loadTileImage(el, item);
+          }
+        } catch (_) {}
+      }
+    };
+    const n = Math.min(PARALLEL, newTiles.length);
+    const workers = [];
+    for (let k = 0; k < n; k++) workers.push(worker());
+    await Promise.all(workers);
+  })();
+
   updateUI();
 }
 
@@ -1809,7 +1856,7 @@ async function refresh(){
     window.scrollTo({top:_pendingScroll,behavior:'instant'});
     _pendingScroll=null;
   }
-  updateStorageInfo(files);
+  setTimeout(()=>updateStorageInfo(files), 1200);
 }
 async function updateStorageInfo(files=null){
   try{
@@ -2991,11 +3038,10 @@ function setupPullToRefresh() {
 }
 
 (async()=>{
+
   const steps = [
     ['initOPFS', initOPFS],
     ['openDB', openDB],
-    ['cleanupPendingWrites', cleanupPendingWrites],
-    ['cleanupOrphans', cleanupOrphans],
     ['loadTheme', loadTheme],
     ['restoreState', restoreState],
     ['checkLock', checkLock],
@@ -3008,8 +3054,11 @@ function setupPullToRefresh() {
     }
     setupAndroidBackButton();
     setupPullToRefresh();
-    setTimeout(()=>{autoCleanTrash().catch(()=>{});},3000);
     setTimeout(()=>{virtualState.lastRange=[-1,-1];updateVirtualGrid();},200);
+
+    setTimeout(()=>{ cleanupPendingWrites().catch(()=>{}); }, 1500);
+    setTimeout(()=>{ cleanupOrphans().catch(()=>{}); }, 4000);
+    setTimeout(()=>{ autoCleanTrash().catch(()=>{}); }, 8000);
   }catch(e){
     document.body.innerHTML='<div style="padding:20px;text-align:left;color:#f87171;font-family:monospace;font-size:12px;white-space:pre-wrap;line-height:1.5;">ОШИБКА на шаге ['+lastStep+']:\n\n'+e.message+'\n\n'+(e.stack||'')+'</div>';
   }
