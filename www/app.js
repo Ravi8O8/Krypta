@@ -4,6 +4,8 @@ const THUMB_PREFIX = 'thumb_';
 const DEFAULT_SLIDESHOW_MS = 3000;
 const DEFAULT_TRASH_DAYS = 30;
 const PREVIEW_CACHE_MAX = 200;
+const DB_CACHE_TTL = 5000;
+const BIG_FILE_THRESHOLD = 2 * 1024 * 1024 * 1024;
 
 const ICONS = {
   image: '<svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>',
@@ -52,6 +54,9 @@ let currentOperation = null, lastProgressUpdate = 0, _keepAliveTimer = null;
 const filePreviewCache = new Map();
 const folderPreviewCache = new Map();
 
+let _filesCache = null, _filesCacheTime = 0;
+let _foldersCache = null, _foldersCacheTime = 0;
+
 function cacheGetPreview(map, key) {
   const e = map.get(key);
   if (!e) return undefined;
@@ -88,15 +93,74 @@ let virtualState = { items: [], cols: 3, rowHeight: 0, paddingTop: 16, lastRange
 
 function initAudio() { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); if (audioCtx.state === 'suspended') audioCtx.resume(); }
 
+let lastSoundTime = 0;
 function playSound(type) {
-  if (!soundEnabled) return; initAudio(); if (!audioCtx) return;
-  const osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
-  osc.connect(gain); gain.connect(audioCtx.destination);
-  const now = audioCtx.currentTime;
-  if (type === 'click') { osc.type='sine'; osc.frequency.setValueAtTime(1200,now); gain.gain.setValueAtTime(0.1,now); gain.gain.exponentialRampToValueAtTime(0.001,now+0.05); osc.start(now); osc.stop(now+0.05); if (navigator.vibrate) navigator.vibrate(10); }
-  else if (type === 'success') { osc.type='triangle'; osc.frequency.setValueAtTime(600,now); osc.frequency.setValueAtTime(900,now+0.1); gain.gain.setValueAtTime(0.1,now); gain.gain.exponentialRampToValueAtTime(0.001,now+0.3); osc.start(now); osc.stop(now+0.3); if (navigator.vibrate) navigator.vibrate([20,50,20]); }
-  else if (type === 'error') { osc.type='sawtooth'; osc.frequency.setValueAtTime(200,now); gain.gain.setValueAtTime(0.15,now); gain.gain.exponentialRampToValueAtTime(0.001,now+0.3); osc.start(now); osc.stop(now+0.3); if (navigator.vibrate) navigator.vibrate([50,100,50]); }
-  else if (type === 'swipe') { osc.type='sine'; osc.frequency.setValueAtTime(800,now); osc.frequency.exponentialRampToValueAtTime(1200,now+0.05); gain.gain.setValueAtTime(0.05,now); gain.gain.exponentialRampToValueAtTime(0.001,now+0.05); osc.start(now); osc.stop(now+0.05); if (navigator.vibrate) navigator.vibrate(5); }
+  if (!soundEnabled) return;
+  const now = Date.now();
+  if (now - lastSoundTime < 25) return;
+  lastSoundTime = now;
+  initAudio(); if (!audioCtx) return;
+  const t = audioCtx.currentTime;
+  const tone = (freq, dur, wave = 'sine', vol = 0.08, delay = 0) => {
+    const start = t + delay;
+    const osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
+    osc.type = wave; osc.frequency.value = freq;
+    osc.connect(gain); gain.connect(audioCtx.destination);
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(vol, start + 0.012);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+    osc.start(start); osc.stop(start + dur + 0.02);
+  };
+  const sweep = (f1, f2, dur, vol = 0.06) => {
+    const osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(f1, t);
+    osc.frequency.exponentialRampToValueAtTime(f2, t + dur);
+    osc.connect(gain); gain.connect(audioCtx.destination);
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(vol, t + 0.012);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    osc.start(t); osc.stop(t + dur + 0.02);
+  };
+  switch (type) {
+    case 'click':
+      tone(920, 0.05, 'sine', 0.06);
+      if (navigator.vibrate) navigator.vibrate(6);
+      break;
+    case 'select':
+      tone(1150, 0.06, 'sine', 0.07);
+      if (navigator.vibrate) navigator.vibrate(10);
+      break;
+    case 'deselect':
+      tone(680, 0.06, 'sine', 0.06);
+      if (navigator.vibrate) navigator.vibrate(6);
+      break;
+    case 'success':
+      tone(660, 0.12, 'sine', 0.07);
+      tone(990, 0.18, 'sine', 0.07, 0.08);
+      if (navigator.vibrate) navigator.vibrate([15, 30, 15]);
+      break;
+    case 'error':
+      tone(240, 0.15, 'triangle', 0.09);
+      tone(180, 0.22, 'triangle', 0.09, 0.11);
+      if (navigator.vibrate) navigator.vibrate([40, 80, 40]);
+      break;
+    case 'swipe':
+      sweep(700, 1300, 0.09, 0.05);
+      if (navigator.vibrate) navigator.vibrate(4);
+      break;
+    case 'open':
+      sweep(480, 880, 0.11, 0.055);
+      break;
+    case 'create':
+      tone(780, 0.06, 'sine', 0.06);
+      tone(1170, 0.11, 'sine', 0.06, 0.06);
+      break;
+    case 'delete':
+      sweep(620, 280, 0.16, 0.06);
+      if (navigator.vibrate) navigator.vibrate(18);
+      break;
+  }
 }
 
 window.toggleSound = async () => { soundEnabled = !soundEnabled; document.getElementById('swSound').classList.toggle('on', soundEnabled); await setSetting('soundEnabled', soundEnabled); if (soundEnabled) playSound('success'); };
@@ -201,10 +265,10 @@ function showUndoToast(title, sub, onUndo, duration = 5000) {
   t.innerHTML = `<div class="toast-title">${escapeHtml(title)}</div>${sub ? `<div class="toast-sub">${escapeHtml(sub)}</div>` : ''}<button type="button" class="toast-action" id="toastUndoBtn">Отменить</button>`;
   t.classList.add('on', 'with-action'); clearTimeout(t._h);
   const btn = t.querySelector('#toastUndoBtn'); let executed = false;
-  const doUndo = async () => { if (executed) return; executed = true; if (pendingUndo) { clearTimeout(pendingUndo.timer); pendingUndo = null; } t.classList.remove('on', 'with-action'); try { await onUndo(); } catch (e) { toast('Ошибка', 'Не удалось отменить', true); } };
+  const doUndo = async () => { if (executed) return; executed = true; if (pendingUndo) { clearTimeout(pendingUndo.timer); pendingUndo = null; } t.classList.remove('on', 'with-action'); try { await onUndo(); } catch (e) { toast('Ошибка', e.message || 'Не удалось отменить', true); } };
   btn.addEventListener('pointerdown', (e) => { e.preventDefault(); doUndo(); });
   const timer = setTimeout(() => { pendingUndo = null; t.classList.remove('on', 'with-action'); }, duration);
-  pendingUndo = { timer, doUndo, executed: false };
+  pendingUndo = { timer, doUndo };
 }
 
 function showConfirm(title, text, okText = 'ОК', cancelText = 'Отмена') {
@@ -902,22 +966,43 @@ function openDB() {
 }
 const st = (n,m) => db.transaction(n,m).objectStore(n);
 const p = r => new Promise((res,rej) => { r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); });
-const getAllFiles = () => p(st(SF,'readonly').getAll());
-const getAllFolders = () => p(st(SFL,'readonly').getAll());
+
+async function getAllFiles(force = false) {
+  if (!force && _filesCache && Date.now() - _filesCacheTime < DB_CACHE_TTL) return _filesCache;
+  _filesCache = await p(st(SF, 'readonly').getAll());
+  _filesCacheTime = Date.now();
+  return _filesCache;
+}
+async function getAllFolders(force = false) {
+  if (!force && _foldersCache && Date.now() - _foldersCacheTime < DB_CACHE_TTL) return _foldersCache;
+  _foldersCache = await p(st(SFL, 'readonly').getAll());
+  _foldersCacheTime = Date.now();
+  return _foldersCache;
+}
+function invalidateCache() {
+  _filesCache = null;
+  _foldersCache = null;
+}
 
 async function addFile(file, hash) {
   const fileId = generateId(); const type = detectType(file);
   const record = { fileId, name: file.name || 'Файл', type, mime: file.type||'', size: file.size, date: Date.now(), importedAt: Date.now(), folderId: currentFolder, hash, deleted: false, deletedAt: null, fav: false, tags: [] };
-  if (!rootDir) { record.blob = file; return p(st(SF, 'readwrite').add(record)); }
+  if (!rootDir) { record.blob = file; const res = await p(st(SF, 'readwrite').add(record)); invalidateCache(); return res; }
   const success = await saveToOPFSChunked(fileId, file);
-  if (!success) throw new Error("Не удалось сохранить файл.");
+  if (!success) throw new Error('Не удалось сохранить файл на диск');
   if (type === 'image' || type === 'video') {
     try { const tb = type === 'image' ? await generateImageThumbnail(file) : await generateVideoThumbnail(file); if (tb) await saveThumb(fileId, tb); } catch(e) {}
   }
-  return p(st(SF, 'readwrite').add(record));
+  const res = await p(st(SF, 'readwrite').add(record));
+  invalidateCache();
+  return res;
 }
 async function getFileData(f) { let raw = null; if (rootDir) raw = await getFromOPFS(f.fileId); if (!raw) raw = f.blob; return raw; }
-function addFolder(name, parent, color) { return p(st(SFL,'readwrite').add({ name, parentId: parent??null, date: Date.now(), color: color || FOLDER_COLORS[0], deleted: false, deletedAt: null })); }
+async function addFolder(name, parent, color) {
+  const res = await p(st(SFL,'readwrite').add({ name, parentId: parent??null, date: Date.now(), color: color || FOLDER_COLORS[0], deleted: false, deletedAt: null }));
+  invalidateCache();
+  return res;
+}
 function detectType(file) {
   const mime = (file.type||'').toLowerCase(), name = (file.name||'').toLowerCase();
   const ext = (name.match(/\.([a-z0-9]+)$/)||[])[1]||'';
@@ -945,6 +1030,7 @@ async function moveToTrash(fileIds, folderIds) {
     for (const id of folderIdSet) { const req = store.get(id); req.onsuccess = () => { const v = req.result; if (v && !v.deleted) { v.deleted = true; v.deletedAt = now; store.put(v); } }; }
     tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error);
   });
+  invalidateCache();
 }
 
 async function restoreFromTrash(fileIds, folderIds) {
@@ -958,6 +1044,7 @@ async function restoreFromTrash(fileIds, folderIds) {
     for (const id of folderIds) { const req = store.get(id); req.onsuccess = () => { const v = req.result; if (v && v.deleted) { v.deleted = false; v.deletedAt = null; store.put(v); } }; }
     tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error);
   });
+  invalidateCache();
 }
 
 async function deletePermanent(fileIds, folderIds) {
@@ -987,6 +1074,7 @@ async function deletePermanent(fileIds, folderIds) {
     folderIdSet.forEach(id => store.delete(id));
     tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error);
   });
+  invalidateCache();
 }
 
 async function emptyTrash() {
@@ -996,8 +1084,8 @@ async function emptyTrash() {
   if (!fids.length && !dids.length) return toast('Корзина пуста', '');
   if (!await showConfirm('Очистка корзины', `Удалить навсегда: <b>${fids.length}</b> файл. и <b>${dids.length}</b> пап.?`)) return;
   showProgress('Очистка корзины', 0, 'Удаление файлов...', '', true);
-  try { await deletePermanent(fids, dids); hideProgress(); await refresh(); toast('Готово', 'Корзина очищена'); }
-  catch(e) { hideProgress(); toast('Ошибка', 'Не удалось очистить', true); }
+  try { await deletePermanent(fids, dids); playSound('delete'); hideProgress(); await refresh(); toast('Готово', 'Корзина очищена'); }
+  catch(e) { hideProgress(); toast('Ошибка', e.message || 'Не удалось очистить корзину', true); }
 }
 
 async function autoCleanTrash() {
@@ -1037,8 +1125,8 @@ window.findDuplicates = async () => {
       if (!await showConfirm('Удаление', `Удалить <b>${duplicates.length}</b> групп дубликатов?`)) return;
       showProgress('Удаление', 0, 'Удаление...', '', true);
       const toDelete = []; duplicates.forEach(g => { g.slice(1).forEach(f => toDelete.push(f.id)); });
-      try { await deletePermanent(toDelete, []); hideProgress(); $('modalDuplicates').classList.remove('on'); await refresh(); toast('Готово', `Удалено ${toDelete.length} файлов`); }
-      catch(e) { hideProgress(); toast('Ошибка', 'Не удалось', true); }
+      try { await deletePermanent(toDelete, []); playSound('delete'); hideProgress(); $('modalDuplicates').classList.remove('on'); await refresh(); toast('Готово', `Удалено ${toDelete.length} файлов`); }
+      catch(e) { hideProgress(); toast('Ошибка', e.message || 'Не удалось удалить дубликаты', true); }
     };
   }
   $('modalDuplicates').style.zIndex = '10005'; $('modalDuplicates').classList.add('on');
@@ -1061,6 +1149,7 @@ window.hardResetDB = async () => {
   try {
     if (db) db.close();
     cacheClearAll();
+    invalidateCache();
     if (rootDir) { const names = []; for await (const name of rootDir.keys()) names.push(name); for (const name of names) await rootDir.removeEntry(name); }
     const req = indexedDB.deleteDatabase(DB_NAME);
     req.onsuccess = () => { if ('caches' in window) caches.keys().then(names => names.forEach(n => caches.delete(n))); localStorage.clear(); sessionStorage.clear(); showConfirm('Готово', 'База очищена. Приложение перезагрузится.').then(() => location.reload()); };
@@ -1101,7 +1190,7 @@ window.toggleLock = async () => {
   else { $('changePassWrap').style.display='block'; $('newPass').focus(); }
 };
 window.savePassword = async () => {
-  const val = $('newPass').value; if(val.length<4) return toast('Ошибка','Короткий пароль',true);
+  const val = $('newPass').value; if(val.length<4) return toast('Ошибка','Пароль должен быть минимум 4 символа',true);
   const salt=generateSalt(), h=await hashPassword(val,salt);
   await setSetting('password',h); await setSetting('salt',salt); await setSetting('lockEnabled',true);
   storedHash=h; storedSalt=salt; $('swLock').classList.add('on'); $('newPass').value='';
@@ -1109,8 +1198,8 @@ window.savePassword = async () => {
 };
 
 function getSelectedFilesSize() { let total = 0; const source = viewMode === 'trash' ? trashFilesCache : currentFilesCache; for (const id of sel) { const f = source.find(x => x.id === id); if (f) total += (f.size || 0); } return total; }
-function toggleFileSelection(id, tileEl) { if (sel.has(id)) { sel.delete(id); tileEl.classList.remove('sel'); } else { sel.add(id); tileEl.classList.add('sel'); playSound('click'); } }
-function toggleFolderSelection(id, tileEl) { if (folderSel.has(id)) { folderSel.delete(id); tileEl.classList.remove('sel'); } else { folderSel.add(id); tileEl.classList.add('sel'); playSound('click'); } }
+function toggleFileSelection(id, tileEl) { if (sel.has(id)) { sel.delete(id); tileEl.classList.remove('sel'); playSound('deselect'); } else { sel.add(id); tileEl.classList.add('sel'); playSound('select'); } }
+function toggleFolderSelection(id, tileEl) { if (folderSel.has(id)) { folderSel.delete(id); tileEl.classList.remove('sel'); playSound('deselect'); } else { folderSel.add(id); tileEl.classList.add('sel'); playSound('select'); } }
 
 async function writeBlobToCacheChunked(blob, cachePath, onProgress) {
   const { Filesystem } = window.Capacitor.Plugins;
@@ -1170,6 +1259,7 @@ async function downloadFileSafe(file, filename) {
 
 function openFile(f) {
   if (isLocked) return;
+  playSound('open');
   $('viewerDelete').style.display = 'none';
   getFilesForGallery().then(() => {
     const idx = galleryFiles.findIndex(x => x.id === f.id);
@@ -1211,18 +1301,19 @@ async function renderViewer() {
   if(modal.dataset.url) URL.revokeObjectURL(modal.dataset.url);
   const url=URL.createObjectURL(file); modal.dataset.url=url;
   currentScale = 1;
-  $('viewerDownload').onclick = async () => { try { const ok = await downloadFileSafe(file, f.name); if (ok) toast('Скачивание', f.name); else toast('Отменено', '', false); } catch(e) { toast('Ошибка', 'Не удалось скачать', true); } };
+  $('viewerDownload').onclick = async () => { try { const ok = await downloadFileSafe(file, f.name); if (ok) toast('Скачивание', f.name); else toast('Отменено', '', false); } catch(e) { toast('Ошибка', e.message || 'Не удалось скачать', true); } };
   $('viewerInfo').onclick = () => { showInfo('file', f); };
   $('viewerDelete').onclick = async () => {
     if (!await showConfirm('В корзину', `Переместить "${f.name}" в корзину?`, 'Да', 'Нет')) return;
     try {
       await moveToTrash([f.id], []);
+      playSound('delete');
       galleryFiles.splice(currentGalleryIndex, 1);
       if (galleryFiles.length === 0) { $('viewerClose').click(); }
       else { if (currentGalleryIndex >= galleryFiles.length) currentGalleryIndex = galleryFiles.length - 1; await renderViewer(); }
       refresh();
       showUndoToast('В корзине', f.name, async () => { await restoreFromTrash([f.id], []); await refresh(); toast('Восстановлено', 'Файл возвращён'); });
-    } catch(e) { toast('Ошибка', 'Не удалось', true); }
+    } catch(e) { toast('Ошибка', e.message || 'Не удалось переместить в корзину', true); }
   };
   content.innerHTML=''; modal.classList.add('on');
   const container = document.createElement('div');
@@ -1318,11 +1409,13 @@ function renderCrumb(folders) {
   path.forEach((f,i)=> { h+=`<span class="sep">›</span><a data-nav="${f.id}" class="${i===path.length-1?'cur':''}">${escapeHtml(f.name)}</a>`; });
   $('crumb').innerHTML=h;
 }
-$('crumb').addEventListener('click', e => {
+$('crumb').addEventListener('click', async e => {
   if (viewMode === 'trash') return;
   const a=e.target.closest('a'); if(!a) return;
-  if (searchScope === 'all' && searchQuery && a.dataset.nav === 'root') { currentFolder = null; searchScope = 'current'; $('btnSearchScope').classList.remove('on'); clearSel(); refresh(); return; }
+  if (searchScope === 'all' && searchQuery && a.dataset.nav === 'root') { currentFolder = null; searchScope = 'current'; $('btnSearchScope').classList.remove('on'); await setSetting('currentFolder', null); clearSel(); refresh(); return; }
+  playSound('open');
   currentFolder = a.dataset.nav==='root' ? null : Number(a.dataset.nav);
+  await setSetting('currentFolder', currentFolder);
   clearSel(); refresh();
 });
 
@@ -1364,9 +1457,12 @@ async function updateStorageInfo(files = null) {
     $('storageFilesSize').textContent = (totalBytes / (1024 * 1024)).toFixed(2) + ' МБ';
     if (navigator.storage && navigator.storage.estimate) {
       const estimate = await navigator.storage.estimate();
-      $('storageUsage').textContent = ((estimate.usage||0)/(1024*1024)).toFixed(2) + ' МБ';
+      const usage = estimate.usage || 0;
+      $('storageUsage').textContent = usage > 0 ? ((usage)/(1024*1024)).toFixed(2) + ' МБ' : '—';
+    } else {
+      $('storageUsage').textContent = '—';
     }
-  } catch(e) {}
+  } catch(e) { $('storageUsage').textContent = '—'; }
 }
 
 function renderGrid(reset = true) {
@@ -1452,10 +1548,10 @@ gridEl.addEventListener('touchmove', e => {
   if (isDragSelecting) {
     e.preventDefault(); const now = Date.now(); if (now - lastDragTime < 50) return; lastDragTime = now;
     const el = document.elementFromPoint(currentX, currentY);
-    if (el) { const tile = el.closest('.tile'); if (tile && tile !== lastHoveredTile) { lastHoveredTile = tile; const id = Number(tile.dataset.id), type = tile.dataset.type; if (type === 'file' && !sel.has(id)) { sel.add(id); tile.classList.add('sel'); updateUI(); playSound('click'); } else if (type === 'folder' && !folderSel.has(id)) { folderSel.add(id); tile.classList.add('sel'); updateUI(); playSound('click'); } } }
+    if (el) { const tile = el.closest('.tile'); if (tile && tile !== lastHoveredTile) { lastHoveredTile = tile; const id = Number(tile.dataset.id), type = tile.dataset.type; if (type === 'file' && !sel.has(id)) { sel.add(id); tile.classList.add('sel'); updateUI(); playSound('select'); } else if (type === 'folder' && !folderSel.has(id)) { folderSel.add(id); tile.classList.add('sel'); updateUI(); playSound('select'); } } }
   } else { if (Math.abs(currentX - startX) > 10 || Math.abs(currentY - startY) > 10) { isScrolling = true; clearTimeout(pressTimer); } }
 }, { passive: false });
-gridEl.addEventListener('touchend', e => {
+gridEl.addEventListener('touchend', async e => {
   clearTimeout(pressTimer);
   if (e.touches.length > 0) return;
   document.body.classList.remove('selecting');
@@ -1465,7 +1561,17 @@ gridEl.addEventListener('touchend', e => {
   const id = Number(tile.dataset.id), type = tile.dataset.type;
   const inSelection = viewMode === 'trash' || sel.size > 0 || folderSel.size > 0;
   if (inSelection) { if (type === 'file') toggleFileSelection(id, tile); else toggleFolderSelection(id, tile); updateUI(); }
-  else { if (type === 'folder') { currentFolder = id; clearSel(); refresh(); } else { const f = currentFilesCache.find(x => x.id === id) || allActiveFilesCache.find(x => x.id === id) || trashFilesCache.find(x => x.id === id); if (f && !f.deleted) openFile(f); } }
+  else {
+    if (type === 'folder') {
+      playSound('open');
+      currentFolder = id;
+      await setSetting('currentFolder', id);
+      clearSel(); refresh();
+    } else {
+      const f = currentFilesCache.find(x => x.id === id) || allActiveFilesCache.find(x => x.id === id) || trashFilesCache.find(x => x.id === id);
+      if (f && !f.deleted) openFile(f);
+    }
+  }
 });
 gridEl.addEventListener('touchcancel', e => { clearTimeout(pressTimer); isLongPress = false; isDragSelecting = false; isScrolling = false; document.body.classList.remove('selecting'); });
 
@@ -1514,11 +1620,13 @@ $('btnSelectAll').onclick = () => {
 $('ctxClose').onclick = () => clearSel();
 
 document.querySelectorAll('.tab').forEach(t => {
-  t.onclick = () => {
+  t.onclick = async () => {
     document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
     t.classList.add('active');
     viewMode = t.dataset.view || 'files'; document.body.dataset.view = viewMode;
     filterType = t.dataset.type || 'all';
+    await setSetting('viewMode', viewMode);
+    await setSetting('filterType', filterType);
     clearSel(); refresh();
   };
 });
@@ -1536,6 +1644,12 @@ $('btnAdd').onclick = () => $('file').click();
 
 $('file').onchange = async e => {
   const files = [...e.target.files]; if (!files.length) return;
+  const bigFiles = files.filter(f => f.size > BIG_FILE_THRESHOLD);
+  if (bigFiles.length > 0) {
+    const list = bigFiles.map(f => `• ${escapeHtml(f.name)} (${(f.size/1073741824).toFixed(1)} ГБ)`).join('<br>');
+    const proceed = await showConfirm('Большие файлы', `Файлы больше 2 ГБ:<br><br>${list}<br><br>Телефон может не справиться с обработкой. Продолжить?`, 'Продолжить', 'Отмена');
+    if (!proceed) { e.target.value = ''; return; }
+  }
   await acquireWakeLock(); startAbortableOperation('add', 'Добавление');
   const addedImageIds = [];
   try {
@@ -1569,7 +1683,7 @@ $('file').onchange = async e => {
     }
   } catch(err) {
     if (err.message === 'Отменено пользователем') toast('Отменено', 'Добавление остановлено');
-    else toast('Ошибка', err.message || 'Не удалось', true);
+    else toast('Ошибка', err.message || 'Не удалось добавить файлы', true);
   }
   e.target.value=''; hideProgress(); endAbortableOperation(); releaseWakeLock();
 };
@@ -1594,20 +1708,25 @@ $('meOk').onclick = async () => {
   if (editId !== null && editId !== undefined) {
     if (editIsFolder) await updateFolderFull(editId, n, selectedFolderColor);
     else await renameItem(SF, editId, n);
+    playSound('success');
     toast('Успешно','Сохранено');
-  } else { await addFolder(n, currentFolder, selectedFolderColor); toast('Успешно','Папка создана'); }
+  } else {
+    await addFolder(n, currentFolder, selectedFolderColor);
+    playSound('create');
+    toast('Успешно','Папка создана');
+  }
   editId = null; $('modalEdit').classList.remove('on'); clearSel(); refresh();
 };
 $('meName').addEventListener('keydown', e => { if (e.key === 'Enter') $('meOk').click(); });
-async function renameItem(store, id, name) { const s=st(store,'readwrite'); const v=await p(s.get(id)); if(v){ v.name=name; await p(s.put(v)); } }
-async function updateFolderFull(id, name, color) { const s=st(SFL,'readwrite'); const v=await p(s.get(id)); if(v){ v.name=name; v.color=color; await p(s.put(v)); } }
+async function renameItem(store, id, name) { const s=st(store,'readwrite'); const v=await p(s.get(id)); if(v){ v.name=name; await p(s.put(v)); } invalidateCache(); }
+async function updateFolderFull(id, name, color) { const s=st(SFL,'readwrite'); const v=await p(s.get(id)); if(v){ v.name=name; v.color=color; await p(s.put(v)); } invalidateCache(); }
 
 $('ctxRename').onclick = async () => {
   if(sel.size+folderSel.size!==1) return;
   try {
-    if(sel.size) { const f = await p(st(SF,'readonly').get([...sel][0])); if(!f) return toast('Ошибка', 'Не найдено', true); openEditModal('Переименовать', f.name, false, f.id); }
-    else { const f = await p(st(SFL,'readonly').get([...folderSel][0])); if(!f) return toast('Ошибка', 'Не найдено', true); openEditModal('Переименовать', f.name, true, f.id, f.color); }
-  } catch(e) { toast('Ошибка', 'Не удалось открыть', true); }
+    if(sel.size) { const f = await p(st(SF,'readonly').get([...sel][0])); if(!f) return toast('Ошибка', 'Файл не найден в базе', true); openEditModal('Переименовать', f.name, false, f.id); }
+    else { const f = await p(st(SFL,'readonly').get([...folderSel][0])); if(!f) return toast('Ошибка', 'Папка не найдена в базе', true); openEditModal('Переименовать', f.name, true, f.id, f.color); }
+  } catch(e) { toast('Ошибка', e.message || 'Не удалось открыть', true); }
 };
 $('ctxFav').onclick = async () => {
   if (sel.size === 0) return;
@@ -1615,6 +1734,7 @@ $('ctxFav').onclick = async () => {
   const allFav = files.every(f => f.fav); const newFav = !allFav;
   const s = st(SF, 'readwrite');
   for (const f of files) { const v = await p(s.get(f.id)); if (v) { v.fav = newFav; await p(s.put(v)); } }
+  invalidateCache();
   clearSel(); refresh(); toast(newFav ? 'Добавлено' : 'Убрано', newFav ? 'Файлы в избранном' : 'Файлы убраны из избранного');
 };
 
@@ -1647,15 +1767,16 @@ $('mvOk').onclick = async () => {
     if (folderSel.size) await moveFolders([...folderSel], target);
     clearSel(); $('modalMove').classList.remove('on'); await refresh();
     toast('Перемещено', '');
-  } catch(e) { toast('Ошибка', e.message || 'Не удалось', true); }
+  } catch(e) { toast('Ошибка', e.message || 'Не удалось переместить', true); }
 };
 
-async function moveFiles(ids, target) { const s=st(SF,'readwrite'); for(const id of ids){ const v=await p(s.get(id)); if(v){ v.folderId=target; await p(s.put(v)); } } }
+async function moveFiles(ids, target) { const s=st(SF,'readwrite'); for(const id of ids){ const v=await p(s.get(id)); if(v){ v.folderId=target; await p(s.put(v)); } } invalidateCache(); }
 async function moveFolders(ids, target) {
   const allFolders = await getAllFolders(); const byId = new Map(allFolders.map(f => [f.id, f]));
   for (const id of ids) { let cur = target; while (cur != null) { if (cur === id) throw new Error('Нельзя переместить папку внутрь неё самой'); const f = byId.get(cur); cur = f ? f.parentId : null; } }
   const s=st(SFL,'readwrite');
   for(const id of ids){ const v=await p(s.get(id)); if(v){ v.parentId=target; await p(s.put(v)); } }
+  invalidateCache();
 }
 
 $('ctxDel').onclick = async () => {
@@ -1663,23 +1784,23 @@ $('ctxDel').onclick = async () => {
   if(!fid.length && !did.length) return;
   if(!await showConfirm('Удаление', `Переместить в корзину: <b>${fid.length}</b> файл. и <b>${did.length}</b> пап.?`)) return;
   try {
-    await moveToTrash(fid, did); clearSel(); await refresh();
+    await moveToTrash(fid, did); playSound('delete'); clearSel(); await refresh();
     const total = fid.length + did.length;
     const subText = total === 1 ? 'Перемещено в корзину' : `${total} ${did.length ? 'объектов' : 'файлов'} в корзине`;
     showUndoToast('В корзине', subText, async () => { await restoreFromTrash(fid, did); await refresh(); toast('Восстановлено', total === 1 ? 'Объект возвращён' : `${total} объектов возвращено`); });
-  } catch(e) { toast('Ошибка', 'Не удалось', true); }
+  } catch(e) { toast('Ошибка', e.message || 'Не удалось переместить в корзину', true); }
 };
 $('ctxRestore').onclick = async () => {
   const fid=[...sel], did=[...folderSel]; if(!fid.length && !did.length) return;
   try { await restoreFromTrash(fid, did); clearSel(); await refresh(); toast('Восстановлено', `${fid.length + did.length} объект.`); }
-  catch(e) { toast('Ошибка', 'Не удалось', true); }
+  catch(e) { toast('Ошибка', e.message || 'Не удалось восстановить', true); }
 };
 $('ctxDelForever').onclick = async () => {
   const fid=[...sel], did=[...folderSel]; if(!fid.length && !did.length) return;
   if(!await showConfirm('Удаление навсегда', `Удалить навсегда: <b>${fid.length}</b> файл. и <b>${did.length}</b> пап.?`, 'Удалить')) return;
   startAbortableOperation('delete', 'Удаление'); showProgress('Удаление', 0, 'Подготовка...', '', true);
-  try { await deletePermanent(fid, did); hideProgress(); clearSel(); await refresh(); toast('Удалено', 'Навсегда'); }
-  catch(e) { hideProgress(); if (e.message === 'Отменено пользователем') toast('Отменено', 'Часть файлов удалена'); else toast('Ошибка', 'Не удалось', true); }
+  try { await deletePermanent(fid, did); playSound('delete'); hideProgress(); clearSel(); await refresh(); toast('Удалено', 'Навсегда'); }
+  catch(e) { hideProgress(); if (e.message === 'Отменено пользователем') toast('Отменено', 'Часть файлов удалена'); else toast('Ошибка', e.message || 'Не удалось удалить', true); }
   finally { endAbortableOperation(); }
 };
 
@@ -1687,7 +1808,7 @@ async function compressFiles(ids, isAutoBatch = false) {
   if (!ids.length) return;
   const files = await getAllFiles();
   const images = files.filter(f => ids.includes(f.id) && f.type === 'image');
-  if(!images.length) return toast('Ошибка','Только фото',true);
+  if(!images.length) return toast('Ошибка','Выбраны файлы, не являющиеся фото',true);
   $('ctxMenu').classList.remove('on'); await acquireWakeLock();
   const reusableCanvas = document.createElement('canvas'); const reusableCtx = reusableCanvas.getContext('2d');
   let processed = 0, succeeded = 0, failed = 0; const stats = [];
@@ -1716,10 +1837,11 @@ async function compressFiles(ids, isAutoBatch = false) {
       } catch(err) { failed++; }
       processed++; await nextMacrotask();
     }
+    invalidateCache();
     hideProgress(); clearSel(); virtualState.lastRange = [-1,-1]; await refresh();
     if (isAutoBatch) showCompressResults(stats, ids);
     else { if (failed > 0) toast('Готово', `Сжато: ${succeeded}, ошибок: ${failed}`); else toast('Успешно', `Сжато: ${succeeded} фото`); }
-  } catch(e) { hideProgress(); toast('Ошибка', 'Не удалось завершить', true); }
+  } catch(e) { hideProgress(); toast('Ошибка', e.message || 'Не удалось завершить сжатие', true); }
   finally { releaseWakeLock(); }
 }
 
@@ -1744,8 +1866,8 @@ $('ctxDownload').onclick = async () => {
   if (!selectedFiles.length && !selectedFolderIds.length) return toast('Ошибка', 'Ничего не выбрано', true);
   if (selectedFiles.length === 1 && selectedFolderIds.length === 0) {
     const f = selectedFiles[0];
-    try { const data = await getFileData(f); if (!data) return toast('Ошибка', 'Файл не найден', true); const ok = await downloadFileSafe(data, f.name || 'file'); if (ok) toast('Скачивание', f.name); }
-    catch(e) { toast('Ошибка', 'Не удалось', true); }
+    try { const data = await getFileData(f); if (!data) return toast('Ошибка', 'Файл не найден на диске', true); const ok = await downloadFileSafe(data, f.name || 'file'); if (ok) toast('Скачивание', f.name); }
+    catch(e) { toast('Ошибка', e.message || 'Не удалось скачать файл', true); }
     return;
   }
   await acquireWakeLock(); startAbortableOperation('export', 'Экспорт'); let stream = null; const startTime = performance.now();
@@ -1783,7 +1905,7 @@ $('ctxDownload').onclick = async () => {
     }
     showProgress('Экспорт', 0, `0/${finalItems.length}`, '', true);
     stream = await createOutputStream(zipName);
-    if (!stream) return toast('Ошибка', 'Браузер не поддерживает потоковую запись в файл. Используйте APK-версию.', true);
+    if (!stream) return toast('Ошибка', 'Браузер не поддерживает сохранение в файл. Используйте APK-версию.', true);
     await writeStreamingZip(stream, finalItems, (i, total, name, bytes) => { const pct = Math.min(99, Math.round((i / total) * 100)); const eta = formatEta(i, total, performance.now() - startTime); showProgress('Экспорт', pct, name || '', `${i}/${total} · ${(bytes/1048576).toFixed(0)} МБ · ${eta}`); });
     showProgress('Экспорт', 99, 'Финализация...', '', true);
     const result = await stream.close(); stream = null; hideProgress();
@@ -1802,7 +1924,7 @@ $('ctxInfo').onclick = async () => {
   try {
     if (sel.size === 1) { const id = [...sel][0]; const src = viewMode === 'trash' ? trashFilesCache : currentFilesCache; const f = src.find(x => x.id === id); if (f) showInfo('file', f); }
     else { const id = [...folderSel][0]; const folders = await getAllFolders(); const f = folders.find(x => x.id === id); if (f) showInfo('folder', f); }
-  } catch(e) { toast('Ошибка', 'Не удалось', true); }
+  } catch(e) { toast('Ошибка', e.message || 'Не удалось получить свойства', true); }
 };
 
 async function applyTagToSelected(tag, action) {
@@ -1816,6 +1938,7 @@ async function applyTagToSelected(tag, action) {
     });
     await new Promise(r => setTimeout(r, 10));
   }
+  invalidateCache();
   const updateCache = (arr) => arr.forEach(f => { if (sel.has(f.id)) { if (!f.tags) f.tags = []; if (action === 'add' && !f.tags.includes(tag)) f.tags.push(tag); if (action === 'remove') f.tags = f.tags.filter(x => x !== tag); } });
   updateCache(currentFilesCache); updateCache(trashFilesCache); updateCache(allActiveFilesCache);
   virtualState.lastRange = [-1,-1]; renderGrid(true); renderTagList();
@@ -1833,8 +1956,35 @@ $('tagInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.pr
 $('tagClose').onclick = () => { $('modalTags').classList.remove('on'); clearSel(); };
 
 $('btnSort').onclick = () => { document.querySelectorAll('#modalSort .list-item').forEach(el=>{ el.style.background = el.dataset.sort===sortBy ? 'var(--bd)' : 'transparent'; }); $('modalSort').classList.add('on'); };
-window.setSort = v => { sortBy=v; $('modalSort').classList.remove('on'); renderGrid(true); };
+window.setSort = async v => {
+  sortBy = v;
+  await setSetting('sortBy', v);
+  $('modalSort').classList.remove('on');
+  renderGrid(true);
+};
 window.setTheme = async name => { document.body.dataset.theme=name; await setSetting('theme',name); document.querySelectorAll('.theme-item').forEach(el=>el.classList.toggle('sel', el.dataset.t===name)); };
+
+async function restoreState() {
+  const s = await getAllSettings();
+  sortBy = s.sortBy || 'date_desc';
+  viewMode = (s.viewMode === 'trash') ? 'trash' : 'files';
+  filterType = s.filterType || 'all';
+  document.body.dataset.view = viewMode;
+  document.querySelectorAll('.tab').forEach(t => {
+    const isActive = (t.dataset.view === viewMode) && ((t.dataset.type || 'all') === filterType);
+    t.classList.toggle('active', isActive);
+  });
+  if (s.currentFolder !== undefined && s.currentFolder !== null) {
+    try {
+      const folders = await getAllFolders();
+      const f = folders.find(x => x.id === s.currentFolder && !x.deleted);
+      currentFolder = f ? f.id : null;
+    } catch(e) { currentFolder = null; }
+  } else {
+    currentFolder = null;
+  }
+}
+
 async function loadTheme() {
   const s = await getAllSettings();
   let t = s.theme || 'dark';
@@ -1865,7 +2015,7 @@ window.exportAllData = async () => {
     const zipName = `mediavault_backup_${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}.zip`;
     showProgress('Экспорт', 0, 'Открытие файла...', '', true);
     stream = await createOutputStream(zipName);
-    if (!stream) return toast('Ошибка', 'Браузер не поддерживает потоковую запись в файл. Используйте APK-версию.', true);
+    if (!stream) return toast('Ошибка', 'Браузер не поддерживает сохранение в файл. Используйте APK-версию.', true);
     const items = [];
     items.push({ name: 'metadata.json', getBlob: async () => new Blob([new TextEncoder().encode(JSON.stringify({ version: DB_VERSION, exportedAt: Date.now(), files, folders, settings }))]) });
     for (const f of files) items.push({ name: `files/${f.fileId}`, getBlob: async () => (await getFromOPFS(f.fileId)) || f.blob || null });
@@ -1930,7 +2080,7 @@ window.importFromArchive = async (input) => {
         const t4 = db.transaction(SF, 'readwrite'); const s4 = t4.objectStore(SF); validFiles.forEach(f => s4.put(f)); await new Promise((res, rej) => { t4.oncomplete = res; t4.onerror = e => rej(e.target.error); });
         const t5 = db.transaction(SFL, 'readwrite'); const s5 = t5.objectStore(SFL); metadata.folders.forEach(f => s5.put(f)); await new Promise((res, rej) => { t5.oncomplete = res; t5.onerror = e => rej(e.target.error); });
         if (metadata.settings && metadata.settings.length) { const t6 = db.transaction(SS, 'readwrite'); const s6 = t6.objectStore(SS); metadata.settings.forEach(s => s6.put(s)); await new Promise((res, rej) => { t6.oncomplete = res; t6.onerror = e => rej(e.target.error); }); }
-        settingsCache = null; hideProgress(); 
+        settingsCache = null; invalidateCache(); hideProgress(); 
         const skipMsg = missingCount > 0 ? ` (Пропущено отсутствующих: ${missingCount})` : '';
         toast('Готово', `Восстановлено ${totalFiles} файлов.${skipMsg} Перезагрузка...`);
         setTimeout(() => location.reload(), 1500); return;
@@ -1984,6 +2134,7 @@ window.importFromArchive = async (input) => {
         if (now - lastYield > 200 || i === mediaEntries.length - 1) { lastYield = now; const eta = formatEta(i + 1, mediaEntries.length, performance.now() - t0); showProgress('Импорт', 5 + Math.round(((i + 1) / mediaEntries.length) * 90), `${i + 1}/${mediaEntries.length}: ${fileName}`, `✓${imported} · ⏭${skipped} · ✗${failed} · ${eta}`); await nextMacrotask(); }
       }
       await flushPending();
+      invalidateCache();
       importedFiles.forEach(f => queueBgThumb(f));
       const elapsed = (performance.now() - t0) / 1000; const totalMB = mediaEntries.reduce((s, e) => s + e.uncompSize, 0) / 1048576; const speed = elapsed > 0 ? totalMB / elapsed : 0;
       hideProgress(); await refresh(); toast('Импорт завершён', `${imported} файл. за ${elapsed.toFixed(0)} сек · ${speed.toFixed(1)} МБ/с`);
@@ -2025,7 +2176,7 @@ window.importFromArchive = async (input) => {
       const t4 = db.transaction(SF, 'readwrite'); const s4 = t4.objectStore(SF); validFiles.forEach(f => s4.put(f)); await new Promise((res, rej) => { t4.oncomplete = res; t4.onerror = e => rej(e.target.error); });
       const t5 = db.transaction(SFL, 'readwrite'); const s5 = t5.objectStore(SFL); metadata.folders.forEach(f => s5.put(f)); await new Promise((res, rej) => { t5.oncomplete = res; t5.onerror = e => rej(e.target.error); });
       if (metadata.settings && metadata.settings.length) { const t6 = db.transaction(SS, 'readwrite'); const s6 = t6.objectStore(SS); metadata.settings.forEach(s => s6.put(s)); await new Promise((res, rej) => { t6.oncomplete = res; t6.onerror = e => rej(e.target.error); }); }
-      settingsCache = null; hideProgress(); 
+      settingsCache = null; invalidateCache(); hideProgress(); 
       const skipMsg = missingCount > 0 ? ` (Пропущено отсутствующих: ${missingCount})` : '';
       toast('Готово', `Восстановлено ${totalFiles} файлов.${skipMsg} Перезагрузка...`);
       setTimeout(() => location.reload(), 1500); return;
@@ -2074,6 +2225,7 @@ window.importFromArchive = async (input) => {
       if (now - lastYield > 150 || i === mediaEntries.length - 1) { lastYield = now; const eta = formatEta(i + 1, mediaEntries.length, performance.now() - t0); showProgress('Импорт', 5 + Math.round(((i + 1) / mediaEntries.length) * 90), `${i + 1}/${mediaEntries.length}: ${fileName}`, `✓${imported} · ⏭${skipped} · ✗${failed} · ${eta}`); await nextMacrotask(); }
     }
     await flushBatch();
+    invalidateCache();
     importedFiles.forEach(f => queueBgThumb(f));
     const elapsed = (performance.now() - t0) / 1000; const totalMB = mediaEntries.reduce((s, e) => s + e.data.length, 0) / 1048576; const speed = elapsed > 0 ? totalMB / elapsed : 0;
     hideProgress(); await refresh(); toast('Импорт завершён', `${imported} файл. за ${elapsed.toFixed(0)} сек · ${speed.toFixed(1)} МБ/с · пропущено ${skipped}`);
@@ -2193,7 +2345,7 @@ window.openGithub = function(e) { if (e && e.preventDefault) e.preventDefault();
 function setupAndroidBackButton() {
   if (!(window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App)) return;
   try {
-    window.Capacitor.Plugins.App.addListener('backButton', () => {
+    window.Capacitor.Plugins.App.addListener('backButton', async () => {
       if ($('viewerModal').classList.contains('on')) { $('viewerClose').click(); return; }
       if ($('modalSettings').classList.contains('on')) { $('modalSettings').classList.remove('on'); return; }
       if ($('modalInfo').classList.contains('on')) { $('modalInfo').classList.remove('on'); return; }
@@ -2206,8 +2358,8 @@ function setupAndroidBackButton() {
       if ($('modalCompressResult').classList.contains('on')) { $('modalCompressResult').classList.remove('on'); return; }
       if (ckTarget) { ckHide(true); return; }
       if (sel.size + folderSel.size > 0) { clearSel(); return; }
-      if (viewMode === 'trash') { document.querySelectorAll('.tab').forEach(x => x.classList.remove('active')); const filesTab = document.querySelector('.tab[data-view="files"]'); if (filesTab) filesTab.classList.add('active'); viewMode = 'files'; document.body.dataset.view = 'files'; filterType = 'all'; refresh(); return; }
-      if (currentFolder !== null) { const cur = allActiveFoldersCache.find(f => f.id === currentFolder); currentFolder = cur ? cur.parentId : null; clearSel(); refresh(); return; }
+      if (viewMode === 'trash') { document.querySelectorAll('.tab').forEach(x => x.classList.remove('active')); const filesTab = document.querySelector('.tab[data-view="files"]'); if (filesTab) filesTab.classList.add('active'); viewMode = 'files'; filterType = 'all'; document.body.dataset.view = 'files'; await setSetting('viewMode', 'files'); await setSetting('filterType', 'all'); refresh(); return; }
+      if (currentFolder !== null) { const cur = allActiveFoldersCache.find(f => f.id === currentFolder); currentFolder = cur ? cur.parentId : null; await setSetting('currentFolder', currentFolder); clearSel(); refresh(); return; }
       try { window.Capacitor.Plugins.App.exitApp(); } catch(_) {}
     });
   } catch(e) {}
@@ -2218,6 +2370,7 @@ function setupAndroidBackButton() {
     await initOPFS();
     await openDB();
     await loadTheme();
+    await restoreState();
     await checkLock();
     setupAndroidBackButton();
     setTimeout(() => { autoCleanTrash().catch(()=>{}); }, 3000);
