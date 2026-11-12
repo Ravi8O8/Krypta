@@ -7,18 +7,6 @@ const PREVIEW_CACHE_MAX = 200;
 const DB_CACHE_TTL = 5000;
 const BIG_FILE_THRESHOLD = 2 * 1024 * 1024 * 1024;
 
-const ACCENT_COLORS = [
-  { name: 'Фиолетовый', hex: '#a78bfa' },
-  { name: 'Синий',      hex: '#60a5fa' },
-  { name: 'Зелёный',    hex: '#34d399' },
-  { name: 'Розовый',    hex: '#f472b6' },
-  { name: 'Оранжевый',  hex: '#fb923c' },
-  { name: 'Красный',    hex: '#f87171' },
-  { name: 'Жёлтый',     hex: '#fbbf24' },
-  { name: 'Голубой',    hex: '#22d3ee' },
-  { name: 'Серый',      hex: '#94a3b8' }
-];
-
 const ICONS = {
   image: '<svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>',
   video: '<svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>',
@@ -63,27 +51,11 @@ let wakeLock = null, isAppInBackground = false;
 let soundEnabled = true, folderPreviewEnabled = true, audioCtx = null;
 let currentOperation = null, lastProgressUpdate = 0, _keepAliveTimer = null;
 
-let _filesCache = null, _filesCacheTime = 0;
-let _foldersCache = null, _foldersCacheTime = 0;
-let _bgTasks = 0;
-
 const filePreviewCache = new Map();
 const folderPreviewCache = new Map();
 
-function setBgBusy(delta) {
-  _bgTasks += delta;
-  if (_bgTasks < 0) _bgTasks = 0;
-  const el = $('headerProgress');
-  if (el) el.classList.toggle('on', _bgTasks > 0);
-}
-
-function hexToRgb(hex) {
-  const h = hex.replace('#', '');
-  const r = parseInt(h.substring(0, 2), 16);
-  const g = parseInt(h.substring(2, 4), 16);
-  const b = parseInt(h.substring(4, 6), 16);
-  return `${r},${g},${b}`;
-}
+let _filesCache = null, _filesCacheTime = 0;
+let _foldersCache = null, _foldersCacheTime = 0;
 
 function cacheGetPreview(map, key) {
   const e = map.get(key);
@@ -151,15 +123,43 @@ function playSound(type) {
     osc.start(t); osc.stop(t + dur + 0.02);
   };
   switch (type) {
-    case 'click': tone(920, 0.05, 'sine', 0.06); if (navigator.vibrate) navigator.vibrate(6); break;
-    case 'select': tone(1150, 0.06, 'sine', 0.07); if (navigator.vibrate) navigator.vibrate(10); break;
-    case 'deselect': tone(680, 0.06, 'sine', 0.06); if (navigator.vibrate) navigator.vibrate(6); break;
-    case 'success': tone(660, 0.12, 'sine', 0.07); tone(990, 0.18, 'sine', 0.07, 0.08); if (navigator.vibrate) navigator.vibrate([15, 30, 15]); break;
-    case 'error': tone(240, 0.15, 'triangle', 0.09); tone(180, 0.22, 'triangle', 0.09, 0.11); if (navigator.vibrate) navigator.vibrate([40, 80, 40]); break;
-    case 'swipe': sweep(700, 1300, 0.09, 0.05); if (navigator.vibrate) navigator.vibrate(4); break;
-    case 'open': sweep(480, 880, 0.11, 0.055); break;
-    case 'create': tone(780, 0.06, 'sine', 0.06); tone(1170, 0.11, 'sine', 0.06, 0.06); break;
-    case 'delete': sweep(620, 280, 0.16, 0.06); if (navigator.vibrate) navigator.vibrate(18); break;
+    case 'click':
+      tone(920, 0.05, 'sine', 0.06);
+      if (navigator.vibrate) navigator.vibrate(6);
+      break;
+    case 'select':
+      tone(1150, 0.06, 'sine', 0.07);
+      if (navigator.vibrate) navigator.vibrate(10);
+      break;
+    case 'deselect':
+      tone(680, 0.06, 'sine', 0.06);
+      if (navigator.vibrate) navigator.vibrate(6);
+      break;
+    case 'success':
+      tone(660, 0.12, 'sine', 0.07);
+      tone(990, 0.18, 'sine', 0.07, 0.08);
+      if (navigator.vibrate) navigator.vibrate([15, 30, 15]);
+      break;
+    case 'error':
+      tone(240, 0.15, 'triangle', 0.09);
+      tone(180, 0.22, 'triangle', 0.09, 0.11);
+      if (navigator.vibrate) navigator.vibrate([40, 80, 40]);
+      break;
+    case 'swipe':
+      sweep(700, 1300, 0.09, 0.05);
+      if (navigator.vibrate) navigator.vibrate(4);
+      break;
+    case 'open':
+      sweep(480, 880, 0.11, 0.055);
+      break;
+    case 'create':
+      tone(780, 0.06, 'sine', 0.06);
+      tone(1170, 0.11, 'sine', 0.06, 0.06);
+      break;
+    case 'delete':
+      sweep(620, 280, 0.16, 0.06);
+      if (navigator.vibrate) navigator.vibrate(18);
+      break;
   }
 }
 
@@ -175,7 +175,7 @@ window.toggleFolderPreview = async () => {
 
 document.addEventListener('pointerdown', (e) => {
   if (e.target.closest('button') || e.target.closest('.tab') || e.target.closest('.ctx-item') || e.target.closest('.theme-item') || e.target.closest('.pill') || e.target.closest('.settings-btn')) {
-    if (!e.target.closest('.ck-key') && !e.target.closest('#confirmOk') && !e.target.closest('#confirmCancel') && !e.target.closest('#pinOk') && !e.target.closest('#pinCancel')) playSound('click');
+    if (!e.target.closest('.ck-key') && !e.target.closest('#confirmOk') && !e.target.closest('#confirmCancel')) playSound('click');
   }
 }, { passive: true });
 
@@ -282,39 +282,6 @@ function showConfirm(title, text, okText = 'ОК', cancelText = 'Отмена') 
     modal.style.zIndex = '99999'; modal.classList.add('on');
   });
 }
-
-let pinResolve = null;
-function promptPin(title, hint = 'Введите 4–6 цифр') {
-  return new Promise(resolve => {
-    $('pinTitle').textContent = title;
-    $('pinHint').textContent = hint;
-    $('pinError').textContent = '';
-    $('pinInput').value = '';
-    pinResolve = resolve;
-    $('modalPin').classList.add('on');
-    setTimeout(() => $('pinInput').focus(), 150);
-  });
-}
-function closePinModal(val) {
-  ckHide(true);
-  $('modalPin').classList.remove('on');
-  const r = pinResolve; pinResolve = null;
-  if (r) r(val);
-}
-$('pinCancel').onclick = () => { playSound('click'); closePinModal(null); };
-$('pinOk').onclick = () => {
-  const val = $('pinInput').value;
-  if (!/^\d{4,6}$/.test(val)) { $('pinError').textContent = 'PIN должен быть 4–6 цифр'; playSound('error'); return; }
-  playSound('click');
-  closePinModal(val);
-};
-$('pinInput').addEventListener('input', e => {
-  e.target.value = e.target.value.replace(/\D/g, '').slice(0, 6);
-  $('pinError').textContent = '';
-});
-$('pinInput').addEventListener('keydown', e => {
-  if (e.key === 'Enter') { e.preventDefault(); $('pinOk').click(); }
-});
 
 const CRC_TABLE = (() => { const t = new Uint32Array(256); for (let i = 0; i < 256; i++) { let c=i; for (let k=0;k<8;k++) c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1); t[i]=c>>>0; } return t; })();
 function isCapacitorNative() { return window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform(); }
@@ -701,28 +668,22 @@ async function deleteThumb(fileId) { if (!rootDir) return; try { await rootDir.r
 
 function queueBgThumb(f) { if (bgThumbQueue.find(x => x.id === f.id)) return; bgThumbQueue.push(f); processBgThumbQueue(); }
 async function processBgThumbQueue() {
-  if (bgThumbRunning) return;
-  bgThumbRunning = true;
-  setBgBusy(1);
-  try {
-    while (bgThumbQueue.length > 0) {
-      const f = bgThumbQueue.shift();
-      try {
-        const existing = await getThumb(f);
-        if (!existing && (f.type === 'image' || f.type === 'video')) {
-          const file = await getFromOPFS(f.fileId) || f.blob;
-          if (file) {
-            const thumb = f.type === 'image' ? await generateImageThumbnail(file) : await generateVideoThumbnail(file);
-            if (thumb) await saveThumb(f.fileId, thumb);
-          }
+  if (bgThumbRunning) return; bgThumbRunning = true;
+  while (bgThumbQueue.length > 0) {
+    const f = bgThumbQueue.shift();
+    try {
+      const existing = await getThumb(f);
+      if (!existing && (f.type === 'image' || f.type === 'video')) {
+        const file = await getFromOPFS(f.fileId) || f.blob;
+        if (file) {
+          const thumb = f.type === 'image' ? await generateImageThumbnail(file) : await generateVideoThumbnail(file);
+          if (thumb) await saveThumb(f.fileId, thumb);
         }
-      } catch(e) {}
-      await nextMacrotask();
-    }
-  } finally {
-    bgThumbRunning = false;
-    setBgBusy(-1);
+      }
+    } catch(e) {}
+    await nextMacrotask();
   }
+  bgThumbRunning = false;
 }
 
 async function loadFolderPreview(folderId, tileEl) {
@@ -805,19 +766,10 @@ function computeGridLayout() {
   const cols = 3;
   const sidePad = 16, topPad = 16, gap = 10;
   const contentWidth = width - sidePad * 2;
-  let ratio = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--tile-ratio'));
-  if (!ratio || isNaN(ratio) || ratio <= 0) ratio = 1;
   virtualState.cols = cols;
-  const tileWidth = (contentWidth - gap * (cols - 1)) / cols;
-  const tileHeight = tileWidth / ratio;
-  virtualState.rowHeight = tileHeight + gap;
+  const tileSize = (contentWidth - gap * (cols - 1)) / cols;
+  virtualState.rowHeight = tileSize + gap;
   virtualState.paddingTop = topPad;
-}
-
-function countFilesInFolder(folderId) {
-  let count = 0;
-  for (const f of allActiveFilesCache) if (f.folderId === folderId) count++;
-  return count;
 }
 
 function createFolderTile(f) {
@@ -825,9 +777,7 @@ function createFolderTile(f) {
   el.className = 'tile folder no-preview' + (folderSel.has(f.id) ? ' sel' : '') + (f.deleted ? ' trashed' : '');
   el.dataset.id = f.id; el.dataset.type = 'folder';
   const folderColor = f.color || 'var(--acc)';
-  const cnt = countFilesInFolder(f.id);
-  const cntHtml = cnt > 0 ? `<div class="folder-count">${cnt > 999 ? '999+' : cnt}</div>` : '';
-  el.innerHTML = `${cntHtml}<div class="folder-preview"></div><div class="body"><svg class="folder-svg" style="color:${folderColor};" viewBox="0 0 24 24"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg><div class="lbl n">${escapeHtml(f.name)}</div></div>${f.deleted ? '<div class="badge trash">Удалено</div>' : ''}<div class="chk"></div>`;
+  el.innerHTML = `<div class="folder-preview"></div><div class="body"><svg class="folder-svg" style="color:${folderColor};" viewBox="0 0 24 24"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg><div class="lbl n">${escapeHtml(f.name)}</div></div>${f.deleted ? '<div class="badge trash">Удалено</div>' : ''}<div class="chk"></div>`;
   return el;
 }
 
@@ -1218,143 +1168,34 @@ async function hashPassword(password, saltHex) {
 }
 function generateSalt() { const arr = new Uint8Array(16); crypto.getRandomValues(arr); return Array.from(arr).map(b => b.toString(16).padStart(2,'0')).join(''); }
 
-async function setPin(pin) {
-  const salt = generateSalt();
-  const h = await hashPassword(pin, salt);
-  await setSetting('pin', h);
-  await setSetting('pinSalt', salt);
-  await setSetting('lockEnabled', true);
-  storedHash = h;
-  storedSalt = salt;
-  $('swLock').classList.add('on');
-  $('pinManageWrap').style.display = 'block';
-}
-async function clearPin() {
-  await setSetting('lockEnabled', false);
-  await setSetting('pin', '');
-  await setSetting('pinSalt', '');
-  storedHash = '';
-  storedSalt = '';
-  $('swLock').classList.remove('on');
-  $('pinManageWrap').style.display = 'none';
-}
-
 async function checkLock() {
   const s = await getAllSettings();
-  storedHash = s.pin || '';
-  storedSalt = s.pinSalt || '';
-  if (s.lockEnabled && storedHash) {
-    isLocked = true;
-    $('lockScreen').style.display = 'flex';
-    $('lockInput').value = '';
-    $('lockErr').textContent = '';
-  } else {
-    await unlockApp();
-  }
+  storedHash = s.password || ''; storedSalt = s.salt || '';
+  if(s.lockEnabled && storedHash) { isLocked=true; $('lockScreen').style.display='flex'; $('lockInput').value=''; }
+  else unlockApp();
 }
-async function unlockApp() { 
-  isLocked = false; 
-  $('lockScreen').style.display = 'none'; 
-  virtualState.lastRange = [-1,-1]; 
-  await refresh(); 
-}
-
+async function unlockApp() { isLocked=false; $('lockScreen').style.display='none'; virtualState.lastRange = [-1,-1]; refresh(); }
 $('lockBtn').onclick = async () => {
   const val = $('lockInput').value; if(!val) return;
   const btn = $('lockBtn'); btn.disabled = true; btn.textContent = '...';
   try {
     const h = await hashPassword(val, storedSalt);
-    if(h===storedHash) {
-      isLocked=false;
-      $('lockScreen').style.display='none';
-      virtualState.lastRange = [-1,-1];
-      await refresh();
-      playSound('success');
-    }
-    else { $('lockErr').textContent='Неверный PIN'; $('lockInput').value=''; playSound('error'); }
+    if(h===storedHash) { isLocked=false; $('lockScreen').style.display='none'; virtualState.lastRange = [-1,-1]; refresh(); playSound('success'); }
+    else { $('lockErr').textContent='Неверный пароль'; $('lockInput').value=''; playSound('error'); }
   } finally { btn.disabled = false; btn.textContent = 'Разблокировать'; }
 };
-$('lockInput').addEventListener('input', e => {
-  e.target.value = e.target.value.replace(/\D/g, '').slice(0, 6);
-});
-$('lockInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('lockBtn').click(); } });
-
 window.toggleLock = async () => {
   const cur = await getSetting('lockEnabled');
-  if (cur) {
-    if (!await showConfirm('Отключить PIN', 'PIN-код будет удалён. Продолжить?', 'Отключить', 'Отмена')) return;
-    const old = await promptPin('Текущий PIN', 'Введите текущий PIN');
-    if (old === null) return;
-    const oldHash = await hashPassword(old, storedSalt);
-    if (oldHash !== storedHash) { toast('Ошибка', 'Неверный PIN', true); return; }
-    await clearPin();
-    toast('Готово', 'PIN отключён');
-  } else {
-    const pin1 = await promptPin('Установка PIN', 'Введите 4–6 цифр');
-    if (pin1 === null) return;
-    const pin2 = await promptPin('Повтор', 'Повторите PIN');
-    if (pin2 === null) return;
-    if (pin1 !== pin2) { toast('Ошибка', 'PIN не совпадает', true); return; }
-    await setPin(pin1);
-    toast('Готово', 'PIN установлен');
-  }
+  if(cur) { await setSetting('lockEnabled',false); $('swLock').classList.remove('on'); $('changePassWrap').style.display='none'; }
+  else { $('changePassWrap').style.display='block'; $('newPass').focus(); }
 };
-
-window.changePin = async () => {
-  const old = await promptPin('Текущий PIN', 'Введите текущий PIN');
-  if (old === null) return;
-  const oldHash = await hashPassword(old, storedSalt);
-  if (oldHash !== storedHash) { toast('Ошибка', 'Неверный PIN', true); return; }
-  const pin1 = await promptPin('Новый PIN', 'Введите 4–6 цифр');
-  if (pin1 === null) return;
-  const pin2 = await promptPin('Повтор', 'Повторите новый PIN');
-  if (pin2 === null) return;
-  if (pin1 !== pin2) { toast('Ошибка', 'PIN не совпадает', true); return; }
-  await setPin(pin1);
-  toast('Готово', 'PIN изменён');
+window.savePassword = async () => {
+  const val = $('newPass').value; if(val.length<4) return toast('Ошибка','Пароль должен быть минимум 4 символа',true);
+  const salt=generateSalt(), h=await hashPassword(val,salt);
+  await setSetting('password',h); await setSetting('salt',salt); await setSetting('lockEnabled',true);
+  storedHash=h; storedSalt=salt; $('swLock').classList.add('on'); $('newPass').value='';
+  toast('Успешно','Пароль установлен');
 };
-
-async function applyAccent(color) {
-  if (color) {
-    document.documentElement.style.setProperty('--acc', color);
-    document.documentElement.style.setProperty('--acc-rgb', hexToRgb(color));
-  } else {
-    document.documentElement.style.removeProperty('--acc');
-    document.documentElement.style.removeProperty('--acc-rgb');
-  }
-}
-async function setAccentColor(hex) {
-  await setSetting('accentColor', hex);
-  await applyAccent(hex);
-  document.querySelectorAll('#accentPalette .color-swatch').forEach(el => {
-    el.classList.toggle('sel', el.dataset.accent === hex);
-  });
-  playSound('click');
-}
-function buildAccentPalette() {
-  const wrap = $('accentPalette');
-  if (!wrap) return;
-  wrap.innerHTML = '';
-  ACCENT_COLORS.forEach(c => {
-    const el = document.createElement('div');
-    el.className = 'color-swatch';
-    el.dataset.accent = c.hex;
-    el.style.background = c.hex;
-    el.title = c.name;
-    el.onclick = () => setAccentColor(c.hex);
-    wrap.appendChild(el);
-  });
-}
-
-async function setTileShape(ratio) {
-  document.documentElement.style.setProperty('--tile-ratio', ratio);
-  await setSetting('tileShape', ratio);
-  document.querySelectorAll('.tile-shape-btn').forEach(el => {
-    el.classList.toggle('sel', el.dataset.shape === ratio);
-  });
-  virtualState.lastRange = [-1,-1];
-  renderGrid(true);
-}
 
 function getSelectedFilesSize() { let total = 0; const source = viewMode === 'trash' ? trashFilesCache : currentFilesCache; for (const id of sel) { const f = source.find(x => x.id === id); if (f) total += (f.size || 0); } return total; }
 function toggleFileSelection(id, tileEl) { if (sel.has(id)) { sel.delete(id); tileEl.classList.remove('sel'); playSound('deselect'); } else { sel.add(id); tileEl.classList.add('sel'); playSound('select'); } }
@@ -1544,39 +1385,19 @@ function showInfo(type, data) {
   if (type === 'file') {
     rows.innerHTML = `<div style="padding:12px 0;border-bottom:1px solid var(--bd);display:flex;justify-content:space-between;font-size:14px;"><span style="color:var(--mut);">Имя:</span><span style="font-weight:600;text-align:right;word-break:break-all;max-width:60%;">${escapeHtml(data.name)}</span></div><div style="padding:12px 0;border-bottom:1px solid var(--bd);display:flex;justify-content:space-between;font-size:14px;"><span style="color:var(--mut);">Тип:</span><span style="font-weight:600;">${TYPE_LABEL[data.type] || 'Файл'}</span></div><div style="padding:12px 0;border-bottom:1px solid var(--bd);display:flex;justify-content:space-between;font-size:14px;"><span style="color:var(--mut);">Размер:</span><span style="font-weight:600;">${((data.size||0)/1048576).toFixed(2)} МБ</span></div><div style="padding:12px 0;border-bottom:1px solid var(--bd);display:flex;justify-content:space-between;font-size:14px;"><span style="color:var(--mut);">Дата:</span><span style="font-weight:600;">${new Date(data.date).toLocaleString('ru-RU')}</span></div><div style="padding:12px 0;border-bottom:1px solid var(--bd);display:flex;justify-content:space-between;font-size:14px;"><span style="color:var(--mut);">Избранное:</span><span style="font-weight:600;">${data.fav ? 'Да' : 'Нет'}</span></div><div style="padding:12px 0;display:flex;justify-content:space-between;font-size:14px;"><span style="color:var(--mut);">Теги:</span><span style="font-weight:600;text-align:right;">${data.tags && data.tags.length ? data.tags.join(', ') : 'Нет'}</span></div>`;
   } else {
-    rows.innerHTML = `<div style="padding:12px 0;border-bottom:1px solid var(--bd);display:flex;justify-content:space-between;font-size:14px;"><span style="color:var(--mut);">Имя:</span><span style="font-weight:600;text-align:right;word-break:break-all;max-width:60%;">${escapeHtml(data.name)}</span></div><div style="padding:12px 0;border-bottom:1px solid var(--bd);display:flex;justify-content:space-between;font-size:14px;"><span style="color:var(--mut);">Тип:</span><span style="font-weight:600;">Папка</span></div><div style="padding:12px 0;border-bottom:1px solid var(--bd);display:flex;justify-content:space-between;font-size:14px;"><span style="color:var(--mut);">Размер:</span><span id="folderSizeCalc" style="font-weight:600;">…</span></div><div style="padding:12px 0;display:flex;justify-content:space-between;font-size:14px;"><span style="color:var(--mut);">Создана:</span><span style="font-weight:600;">${new Date(data.date).toLocaleString('ru-RU')}</span></div>`;
-    getFolderSize(data.id).then(size => { const a = $('folderSizeCalc'); if (a) a.textContent = (size/1048576).toFixed(2)+' МБ'; }).catch(() => {});
+    rows.innerHTML = `<div style="padding:12px 0;border-bottom:1px solid var(--bd);display:flex;justify-content:space-between;font-size:14px;"><span style="color:var(--mut);">Имя:</span><span style="font-weight:600;text-align:right;word-break:break-all;max-width:60%;">${escapeHtml(data.name)}</span></div><div style="padding:12px 0;border-bottom:1px solid var(--bd);display:flex;justify-content:space-between;font-size:14px;"><span style="color:var(--mut);">Тип:</span><span style="font-weight:600;">Папка</span></div><div style="padding:12px 0;border-bottom:1px solid var(--bd);display:flex;justify-content:space-between;font-size:14px;"><span style="color:var(--mut);">Размер:</span><span id="folderSizeCalc" style="font-weight:600;">…</span></div><div style="padding:12px 0;border-bottom:1px solid var(--bd);display:flex;justify-content:space-between;font-size:14px;"><span style="color:var(--mut);">Файлов:</span><span id="folderFilesCalc" style="font-weight:600;">…</span></div><div style="padding:12px 0;border-bottom:1px solid var(--bd);display:flex;justify-content:space-between;font-size:14px;"><span style="color:var(--mut);">Подпапок:</span><span id="folderSubCalc" style="font-weight:600;">…</span></div><div style="padding:12px 0;display:flex;justify-content:space-between;font-size:14px;"><span style="color:var(--mut);">Создана:</span><span style="font-weight:600;">${new Date(data.date).toLocaleString('ru-RU')}</span></div>`;
+    getFolderStats(data.id).then(s => { const a = $('folderSizeCalc'), b = $('folderFilesCalc'), c = $('folderSubCalc'); if (a) a.textContent = (s.size/1048576).toFixed(2)+' МБ'; if (b) b.textContent = s.count; if (c) c.textContent = s.folderCount; }).catch(() => {});
   }
   $('modalInfo').style.zIndex = '10005'; $('modalInfo').classList.add('on');
 }
-async function getFolderSize(folderId) {
+async function getFolderStats(folderId) {
   const [files, folders] = await Promise.all([getAllFiles(), getAllFolders()]);
   const folderIds = new Set([folderId]);
   let changed = true;
   while (changed) { changed = false; for (const f of folders) if (f.parentId != null && folderIds.has(f.parentId) && !folderIds.has(f.id)) { folderIds.add(f.id); changed = true; } }
-  let size = 0;
-  for (const f of files) if (!f.deleted && folderIds.has(f.folderId)) size += (f.size || 0);
-  return size;
-}
-
-function updateHeaderCounter() {
-  const el = $('headerCounter');
-  if (!el) return;
-  if (searchQuery) {
-    el.textContent = virtualState.items.length + ' найдено';
-    return;
-  }
-  if (viewMode === 'trash') {
-    const cnt = trashFilesCache.length + trashFoldersCache.length;
-    el.textContent = cnt > 0 ? cnt + ' удал.' : '';
-    return;
-  }
-  const files = currentFilesCache.length;
-  const folders = currentFoldersCache.length;
-  const parts = [];
-  if (folders > 0) parts.push(folders + ' пап.');
-  if (files > 0) parts.push(files + ' файл.');
-  el.textContent = parts.join(' · ');
+  let size = 0, count = 0;
+  for (const f of files) if (!f.deleted && folderIds.has(f.folderId)) { size += (f.size || 0); count++; }
+  return { size, count, folderCount: folderIds.size - 1 };
 }
 
 function renderCrumb(folders) {
@@ -1675,7 +1496,6 @@ function renderGrid(reset = true) {
   for (const f of curFiles) combined.push({ ...f, _isFolder: false });
   virtualState.items = combined;
   virtualState.lastRange = [-1, -1];
-  updateHeaderCounter();
   if (combined.length === 0) {
     const msg = viewMode === 'trash' ? (searchQuery ? 'Ничего не найдено.' : 'Корзина пуста.') : (filterType !== 'all' || searchQuery) ? 'Ничего не найдено.' : 'Пока пусто.<br>Нажмите «+ Добавить».';
     $('gridWrap').style.height = 'auto';
@@ -2143,7 +1963,6 @@ window.setSort = async v => {
   renderGrid(true);
 };
 window.setTheme = async name => { document.body.dataset.theme=name; await setSetting('theme',name); document.querySelectorAll('.theme-item').forEach(el=>el.classList.toggle('sel', el.dataset.t===name)); };
-window.setTileShape = setTileShape;
 
 async function restoreState() {
   const s = await getAllSettings();
@@ -2172,38 +1991,20 @@ async function loadTheme() {
   const ALLOWED = ['dark', 'light'];
   if (!ALLOWED.includes(t)) t = 'dark';
   await setTheme(t);
-  if (s.accentColor) await applyAccent(s.accentColor);
-  buildAccentPalette();
-  const shape = s.tileShape || '1';
-  document.documentElement.style.setProperty('--tile-ratio', shape);
-  document.querySelectorAll('.tile-shape-btn').forEach(el => el.classList.toggle('sel', el.dataset.shape === shape));
   const savedSlideshowMs = Number(s.slideshowInterval ?? DEFAULT_SLIDESHOW_MS);
   slideshowInterval = savedSlideshowMs;
   const sec = Math.round(savedSlideshowMs / 1000);
   $('slideshowIntRange').value = sec; $('slideshowIntVal').textContent = sec + ' сек';
   $('swLock').classList.toggle('on', !!s.lockEnabled);
-  $('pinManageWrap').style.display = $('swLock').classList.contains('on') ? 'block' : 'none';
+  $('changePassWrap').style.display = $('swLock').classList.contains('on') ? 'block' : 'none';
   const trashDays = s.trashAutoDays ?? DEFAULT_TRASH_DAYS;
   updateTrashAutoPillsUI(trashDays);
   soundEnabled = s.soundEnabled === true;
   if ($('swSound')) $('swSound').classList.toggle('on', soundEnabled);
   folderPreviewEnabled = s.folderPreviewEnabled !== false;
   if ($('swFolderPreview')) $('swFolderPreview').classList.toggle('on', folderPreviewEnabled);
-  document.querySelectorAll('#accentPalette .color-swatch').forEach(el => {
-    el.classList.toggle('sel', el.dataset.accent === s.accentColor);
-  });
 }
-$('btnSettings').onclick = async () => {
-  $('modalSettings').classList.add('on');
-  await updateStorageInfo();
-  updateTrashAutoPillsUI(await getTrashAutoDays());
-  document.querySelectorAll('#accentPalette .color-swatch').forEach(el => {
-    const cur = await getSetting('accentColor');
-    el.classList.toggle('sel', el.dataset.accent === cur);
-  });
-  const curShape = (await getSetting('tileShape')) || '1';
-  document.querySelectorAll('.tile-shape-btn').forEach(el => el.classList.toggle('sel', el.dataset.shape === curShape));
-};
+$('btnSettings').onclick = async () => { $('modalSettings').classList.add('on'); await updateStorageInfo(); updateTrashAutoPillsUI(await getTrashAutoDays()); };
 
 window.exportAllData = async () => {
   if (!await showConfirm('Экспорт', 'Создать полный архив со всеми файлами, папками и настройками?<br><br>Файлы стримятся на диск — поддерживаются любые объёмы (50+ ГБ).', 'Экспорт', 'Отмена')) return;
@@ -2253,10 +2054,10 @@ window.importFromArchive = async (input) => {
         hideProgress();
         if (!await showConfirm('Восстановление', 'Обнаружена полная резервная копия.<br><br>Все текущие данные будут <b>заменены</b>. Продолжить?', 'Восстановить', 'Отмена')) return;
         await acquireWakeLock();
-
+        
         const basePath = metadataEntry.name.substring(0, metadataEntry.name.length - 'metadata.json'.length);
         const entryMap = new Map(zipInfo.entries.map(e => [e.name, e]));
-
+        
         const validFiles = metadata.files.filter(f => entryMap.has(basePath + `files/${f.fileId}`));
         const missingCount = metadata.files.length - validFiles.length;
 
@@ -2279,7 +2080,7 @@ window.importFromArchive = async (input) => {
         const t4 = db.transaction(SF, 'readwrite'); const s4 = t4.objectStore(SF); validFiles.forEach(f => s4.put(f)); await new Promise((res, rej) => { t4.oncomplete = res; t4.onerror = e => rej(e.target.error); });
         const t5 = db.transaction(SFL, 'readwrite'); const s5 = t5.objectStore(SFL); metadata.folders.forEach(f => s5.put(f)); await new Promise((res, rej) => { t5.oncomplete = res; t5.onerror = e => rej(e.target.error); });
         if (metadata.settings && metadata.settings.length) { const t6 = db.transaction(SS, 'readwrite'); const s6 = t6.objectStore(SS); metadata.settings.forEach(s => s6.put(s)); await new Promise((res, rej) => { t6.oncomplete = res; t6.onerror = e => rej(e.target.error); }); }
-        settingsCache = null; invalidateCache(); hideProgress();
+        settingsCache = null; invalidateCache(); hideProgress(); 
         const skipMsg = missingCount > 0 ? ` (Пропущено отсутствующих: ${missingCount})` : '';
         toast('Готово', `Восстановлено ${totalFiles} файлов.${skipMsg} Перезагрузка...`);
         setTimeout(() => location.reload(), 1500); return;
@@ -2349,10 +2150,10 @@ window.importFromArchive = async (input) => {
       hideProgress();
       if (!await showConfirm('Восстановление', 'Обнаружена полная резервная копия.<br><br>Все текущие данные будут <b>заменены</b>. Продолжить?', 'Восстановить', 'Отмена')) return;
       await acquireWakeLock();
-
+      
       const basePath = metadataEntry.name.substring(0, metadataEntry.name.length - 'metadata.json'.length);
       const entryMap = new Map(entries.map(e => [e.name, e]));
-
+      
       const validFiles = metadata.files.filter(f => entryMap.has(basePath + `files/${f.fileId}`));
       const missingCount = metadata.files.length - validFiles.length;
 
@@ -2375,7 +2176,7 @@ window.importFromArchive = async (input) => {
       const t4 = db.transaction(SF, 'readwrite'); const s4 = t4.objectStore(SF); validFiles.forEach(f => s4.put(f)); await new Promise((res, rej) => { t4.oncomplete = res; t4.onerror = e => rej(e.target.error); });
       const t5 = db.transaction(SFL, 'readwrite'); const s5 = t5.objectStore(SFL); metadata.folders.forEach(f => s5.put(f)); await new Promise((res, rej) => { t5.oncomplete = res; t5.onerror = e => rej(e.target.error); });
       if (metadata.settings && metadata.settings.length) { const t6 = db.transaction(SS, 'readwrite'); const s6 = t6.objectStore(SS); metadata.settings.forEach(s => s6.put(s)); await new Promise((res, rej) => { t6.oncomplete = res; t6.onerror = e => rej(e.target.error); }); }
-      settingsCache = null; invalidateCache(); hideProgress();
+      settingsCache = null; invalidateCache(); hideProgress(); 
       const skipMsg = missingCount > 0 ? ` (Пропущено отсутствующих: ${missingCount})` : '';
       toast('Готово', `Восстановлено ${totalFiles} файлов.${skipMsg} Перезагрузка...`);
       setTimeout(() => location.reload(), 1500); return;
@@ -2528,6 +2329,7 @@ $('ckLangBtn').addEventListener('pointerdown', (e) => { e.preventDefault(); play
 $('ckModeBtn').addEventListener('pointerdown', (e) => { e.preventDefault(); playSound('click'); ckLayout = (ckLayout === 'num') ? 'ru' : 'num'; ckShift = false; ckRender(); });
 document.addEventListener('focusin', (e) => { const t = e.target; if (!ckIsTextInput(t)) return; if (t === ckTarget) return; ckShow(t); });
 $('lockInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('lockBtn').click(); } });
+$('newPass').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); const btn = document.querySelector('button[onclick*="savePassword"]'); if (btn) btn.click(); } });
 document.addEventListener('pointerdown', (e) => { if (!ckTarget) return; if (e.target.closest('.ck')) return; if (e.target === ckTarget) return; if (ckIsTextInput(e.target)) return; ckHide(true); }, { passive: true });
 
 document.querySelectorAll('.modal:not(.custom-confirm) .box').forEach(box => {
@@ -2544,7 +2346,6 @@ function setupAndroidBackButton() {
   if (!(window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App)) return;
   try {
     window.Capacitor.Plugins.App.addListener('backButton', async () => {
-      if ($('modalPin').classList.contains('on')) { $('pinCancel').click(); return; }
       if ($('viewerModal').classList.contains('on')) { $('viewerClose').click(); return; }
       if ($('modalSettings').classList.contains('on')) { $('modalSettings').classList.remove('on'); return; }
       if ($('modalInfo').classList.contains('on')) { $('modalInfo').classList.remove('on'); return; }
@@ -2575,6 +2376,6 @@ function setupAndroidBackButton() {
     setTimeout(() => { autoCleanTrash().catch(()=>{}); }, 3000);
     setTimeout(() => { virtualState.lastRange = [-1,-1]; updateVirtualGrid(); }, 200);
   } catch(e) {
-    document.body.innerHTML = '<div style="padding:20px;text-align:center;color:red;font-family:sans-serif;">Ошибка инициализации. Пожалуйста, очистите кэш приложения или переустановите его.<br><br><small>' + (e.message || e) + '</small></div>';
+    document.body.innerHTML = '<div style="padding:20px;text-align:center;color:red;">Ошибка базы данных.</div>';
   }
 })();
