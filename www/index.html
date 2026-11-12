@@ -10,19 +10,50 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 <style>
-.btn-scope {
-  flex-shrink: 0; width: 42px; height: 42px;
-  background: var(--card); border: 1px solid var(--bd);
-  border-radius: var(--r-md); display: flex; align-items: center; justify-content: center;
-  color: var(--mut); transition: all 0.2s var(--ease);
-}
-.btn-scope.on { background: color-mix(in srgb, var(--acc) 15%, transparent); border-color: var(--acc); color: var(--acc); }
-#progCancelBtn { display: none; width: 28px; height: 28px; border-radius: 50%; background: var(--danger); color: #fff; align-items: center; justify-content: center; flex-shrink: 0; }
-.tile.broken { opacity: 0.5; position: relative; }
-.tile.broken::after { content: "⚠️"; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 28px; background: rgba(0,0,0,0.5); z-index: 6; pointer-events: none; }
+.btn-scope{flex-shrink:0;width:42px;height:42px;background:var(--card);border:1px solid var(--bd);border-radius:var(--r-md);display:flex;align-items:center;justify-content:center;color:var(--mut);transition:all 0.2s var(--ease);}
+.btn-scope.on{background:color-mix(in srgb,var(--acc) 15%,transparent);border-color:var(--acc);color:var(--acc);}
+#progCancelBtn{display:none;width:28px;height:28px;border-radius:50%;background:var(--danger);color:#fff;align-items:center;justify-content:center;flex-shrink:0;}
+.tile.broken{opacity:0.5;position:relative;}
+.tile.broken::after{content:"⚠️";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:28px;background:rgba(0,0,0,0.5);z-index:6;pointer-events:none;}
 </style>
+<script>
+(function(){
+  var shown=false;
+  function showErr(txt){
+    if(shown)return;shown=true;
+    var d=document.createElement('div');
+    d.style.cssText='position:fixed;inset:0;z-index:2147483647;background:#fff;color:#b00020;padding:16px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;line-height:1.5;overflow:auto;white-space:pre-wrap;word-break:break-word;';
+    d.textContent='ОШИБКА ПРИЛОЖЕНИЯ:\n\n'+txt;
+    var b=document.createElement('button');
+    b.textContent='Скопировать';
+    b.style.cssText='position:fixed;right:12px;bottom:12px;padding:10px 16px;background:#b00020;color:#fff;border:none;border-radius:8px;font-size:14px;z-index:2147483647;';
+    b.onclick=function(){try{navigator.clipboard.writeText(txt);b.textContent='Скопировано';}catch(e){}};
+    d.appendChild(b);
+    document.body.appendChild(d);
+  }
+  window.addEventListener('error',function(e){
+    var msg='';
+    if(e.error&&e.error.stack){msg=e.error.stack;}
+    else{msg=(e.message||'Unknown error')+'\n  at '+(e.filename||'?')+':'+(e.lineno||'?')+':'+(e.colno||'?');}
+    showErr(msg);
+    try{console.error('APP ERROR:',e.message||e.error,e);}catch(_){}
+  });
+  window.addEventListener('unhandledrejection',function(e){
+    var r=e.reason;
+    var msg=r&&r.stack?r.stack:('Unhandled rejection: '+(r&&(r.message||String(r))));
+    showErr(msg);
+    try{console.error('APP REJECTION:',r);}catch(_){}
+  });
+})();
+</script>
 </head>
 <body data-theme="dark" data-view="files">
+
+<div id="ptr">
+  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+    <polyline points="18 15 12 9 6 15"/>
+  </svg>
+</div>
 
 <div id="progressDrawer">
   <div class="prog-title">
@@ -37,12 +68,29 @@
 </div>
 
 <div id="lockScreen" style="background:var(--bg);position:fixed;inset:0;z-index:9999;display:none;flex-direction:column;align-items:center;justify-content:center;padding:20px;text-align:center;">
-  <svg viewBox="0 0 24 24" width="56" height="56" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="color:var(--acc);margin-bottom:24px;"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-  <div style="font-size:22px;font-weight:700;margin-bottom:8px;letter-spacing:-0.02em;">Вход в архив</div>
-  <div style="color:var(--mut);font-size:14px;margin-bottom:24px;">Введите пароль для доступа</div>
-  <div style="color:var(--danger);font-size:14px;margin-bottom:15px;min-height:20px;font-weight:600;" id="lockErr"></div>
-  <input type="password" id="lockInput" inputmode="numeric" placeholder="••••" style="width:100%;max-width:300px;background:var(--card);border:1px solid var(--bd);border-radius:16px;padding:16px;color:var(--txt);font-size:24px;text-align:center;letter-spacing:8px;outline:none;margin-bottom:20px;">
-  <button id="lockBtn" style="width:100%;max-width:300px;padding:16px;font-size:16px;border-radius:16px;background:var(--acc);color:#fff;font-weight:600;box-shadow:0 8px 24px rgba(var(--acc-rgb),0.35);">Разблокировать</button>
+  <svg viewBox="0 0 24 24" width="56" height="56" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="color:var(--acc);margin-bottom:16px;"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+  <div style="font-size:22px;font-weight:700;margin-bottom:4px;letter-spacing:-0.02em;">Введите PIN</div>
+  <div id="pinError" style="color:var(--danger);font-size:13px;height:18px;margin-top:8px;font-weight:600;"></div>
+  <div id="pinDots" class="pin-dots">
+    <span class="pin-dot"></span>
+    <span class="pin-dot"></span>
+    <span class="pin-dot"></span>
+    <span class="pin-dot"></span>
+  </div>
+  <div class="pin-pad" id="pinPad">
+    <button class="pin-key" data-pin="1">1</button>
+    <button class="pin-key" data-pin="2">2</button>
+    <button class="pin-key" data-pin="3">3</button>
+    <button class="pin-key" data-pin="4">4</button>
+    <button class="pin-key" data-pin="5">5</button>
+    <button class="pin-key" data-pin="6">6</button>
+    <button class="pin-key" data-pin="7">7</button>
+    <button class="pin-key" data-pin="8">8</button>
+    <button class="pin-key" data-pin="9">9</button>
+    <button class="pin-key pin-empty" disabled></button>
+    <button class="pin-key" data-pin="0">0</button>
+    <button class="pin-key pin-back" data-pin="back">⌫</button>
+  </div>
 </div>
 
 <div id="viewerModal">
@@ -64,13 +112,14 @@
 <header>
   <div class="top-row">
     <div class="crumb" id="crumb"></div>
+    <div class="header-counter" id="headerCounter"></div>
     <button class="btn-icon" id="btnSort" title="Сортировка"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21 16-4 4-4-4"/><path d="M17 20V4"/><path d="m3 8 4-4 4 4"/><path d="M7 4v16"/></svg></button>
     <button class="btn-icon" id="btnSettings" title="Настройки"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
   </div>
   <div class="search-wrap">
     <div class="search" id="searchWrap">
       <span class="ico"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
-      <input type="text" id="search" placeholder="Поиск файлов и тегов...">
+      <input type="text" id="search" placeholder="Поиск файлов...">
       <button class="clr" id="searchClear"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
     </div>
     <button class="btn-scope" id="btnSearchScope" title="Искать в текущей папке"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></button>
@@ -106,16 +155,15 @@
       <button id="ctxClose"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
     </div>
   </div>
-  <div class="ctx-grid" id="ctxRow1" style="grid-template-columns:repeat(3,1fr);">
+  <div class="ctx-grid" id="ctxActions" style="grid-template-columns:repeat(3,1fr);">
     <button class="ctx-item" id="ctxRename"><div class="ctx-icon"><svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg></div><span class="ctx-label">Имя</span></button>
     <button class="ctx-item" id="ctxMove"><div class="ctx-icon"><svg viewBox="0 0 24 24"><path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-6 12v-3H9v-2h5v-3l4 4-4 4z"/></svg></div><span class="ctx-label">В папку</span></button>
     <button class="ctx-item" id="ctxInfo"><div class="ctx-icon"><svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg></div><span class="ctx-label">Свойства</span></button>
   </div>
-  <div class="ctx-grid" id="ctxRow2">
+  <div class="ctx-grid" id="ctxActions2" style="grid-template-columns:repeat(3,1fr);">
     <button class="ctx-item" id="ctxFav"><div class="ctx-icon"><svg viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg></div><span class="ctx-label">Избранное</span></button>
     <button class="ctx-item" id="ctxDownload"><div class="ctx-icon"><svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg></div><span class="ctx-label">Скачать</span></button>
     <button class="ctx-item" id="ctxCompress"><div class="ctx-icon"><svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg></div><span class="ctx-label">Сжать</span></button>
-    <button class="ctx-item" id="ctxTag"><div class="ctx-icon"><svg viewBox="0 0 24 24"><path d="M17.63 5.84C17.27 5.33 16.67 5 16 5L5 5.01C3.9 5.01 3 5.9 3 7v10c0 1.1.9 1.99 2 1.99L16 19c.67 0 1.27-.33 1.63-.84L22 12l-4.37-6.16zM16 17H5V7h11l3.55 5L16 17z"/></svg></div><span class="ctx-label">Теги</span></button>
   </div>
   <div class="ctx-grid" id="ctxRow3" style="grid-template-columns:1fr;">
     <button class="ctx-item danger" id="ctxDel"><div class="ctx-icon"><svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg></div><span class="ctx-label">Удалить</span></button>
@@ -140,16 +188,15 @@
 
 <div class="modal" id="modalSort">
   <div class="box"><div class="drag-handle"></div><h3>Сортировка</h3>
-    <div class="list-group" style="border:1px solid var(--bd);border-radius:16px;background:var(--card);overflow:hidden;">
-      <div class="list-item" data-sort="fav_first" onclick="setSort('fav_first')" style="padding:16px;cursor:pointer;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:10px;"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#fbbf24;"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>Сначала избранные</div>
-      <div class="list-item" data-sort="name_asc" onclick="setSort('name_asc')" style="padding:16px;cursor:pointer;border-bottom:1px solid var(--bd);">Имя (А-Я)</div>
-      <div class="list-item" data-sort="name_desc" onclick="setSort('name_desc')" style="padding:16px;cursor:pointer;border-bottom:1px solid var(--bd);">Имя (Я-А)</div>
-      <div class="list-item" data-sort="date_desc" onclick="setSort('date_desc')" style="padding:16px;cursor:pointer;border-bottom:1px solid var(--bd);">Сначала новые</div>
-      <div class="list-item" data-sort="date_asc" onclick="setSort('date_asc')" style="padding:16px;cursor:pointer;border-bottom:1px solid var(--bd);">Сначала старые</div>
-      <div class="list-item" data-sort="size_desc" onclick="setSort('size_desc')" style="padding:16px;cursor:pointer;border-bottom:1px solid var(--bd);">Сначала тяжелые</div>
-      <div class="list-item" data-sort="size_asc" onclick="setSort('size_asc')" style="padding:16px;cursor:pointer;border-bottom:1px solid var(--bd);">Сначала легкие</div>
-      <div class="list-item" data-sort="added_asc" onclick="setSort('added_asc')" style="padding:16px;cursor:pointer;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:10px;"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--acc);"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>По порядку добавления</div>
-      <div class="list-item" data-sort="added_desc" onclick="setSort('added_desc')" style="padding:16px;cursor:pointer;display:flex;align-items:center;gap:10px;"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--acc);"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>По порядку добавления (обратный)</div>
+    <div style="border:1px solid var(--bd);border-radius:16px;background:var(--card);overflow:hidden;">
+      <div class="sort-item" data-sort="name_asc" onclick="setSort('name_asc')"><span>Имя (А-Я)</span><svg class="sort-check" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></div>
+      <div class="sort-item" data-sort="name_desc" onclick="setSort('name_desc')"><span>Имя (Я-А)</span><svg class="sort-check" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></div>
+      <div class="sort-item" data-sort="date_desc" onclick="setSort('date_desc')"><span>Сначала новые</span><svg class="sort-check" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></div>
+      <div class="sort-item" data-sort="date_asc" onclick="setSort('date_asc')"><span>Сначала старые</span><svg class="sort-check" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></div>
+      <div class="sort-item" data-sort="size_desc" onclick="setSort('size_desc')"><span>Сначала тяжелые</span><svg class="sort-check" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></div>
+      <div class="sort-item" data-sort="size_asc" onclick="setSort('size_asc')"><span>Сначала легкие</span><svg class="sort-check" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></div>
+      <div class="sort-item" data-sort="added_asc" onclick="setSort('added_asc')"><span>По порядку добавления</span><svg class="sort-check" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></div>
+      <div class="sort-item" data-sort="added_desc" onclick="setSort('added_desc')" style="border-bottom:none;"><span>По порядку добавления (обратный)</span><svg class="sort-check" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></div>
     </div>
   </div>
 </div>
@@ -168,9 +215,13 @@
       <div class="settings-card">
         <div class="settings-card-head"><div class="settings-icon-box"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg></div><div><div class="settings-card-title">Тема оформления</div><div class="settings-card-sub">Цветовая схема интерфейса</div></div></div>
         <div class="theme-grid">
-          <div class="theme-item" data-t="dark" onclick="setTheme('dark')"><div class="theme-preview"><div class="theme-color" style="background:#08090c"></div><div class="theme-color" style="background:#a78bfa"></div></div><span>Тёмная</span></div>
-          <div class="theme-item" data-t="light" onclick="setTheme('light')"><div class="theme-preview"><div class="theme-color" style="background:#fafafa"></div><div class="theme-color" style="background:#7c3aed"></div></div><span>Светлая</span></div>
+          <div class="theme-item" data-t="dark" onclick="setTheme('dark')"><div class="theme-preview"><div class="theme-color" style="background:#08090c"></div><div class="theme-color"></div></div><span>Тёмная</span></div>
+          <div class="theme-item" data-t="light" onclick="setTheme('light')"><div class="theme-preview"><div class="theme-color" style="background:#fafafa"></div><div class="theme-color"></div></div><span>Светлая</span></div>
         </div>
+      </div>
+      <div class="settings-card">
+        <div class="settings-card-head with-divider"><div class="settings-icon-box"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/></svg></div><div><div class="settings-card-title">Цвет акцента</div><div class="settings-card-sub">Основной цвет кнопок и выделений</div></div></div>
+        <div class="accent-picker" id="accentPicker"></div>
       </div>
       <div class="settings-card">
         <div class="settings-row"><span style="display:flex;align-items:center;gap:10px;"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--mut);"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="3"/></svg>Превью папок</span><div class="switch" id="swFolderPreview" onclick="toggleFolderPreview()"></div></div>
@@ -195,11 +246,15 @@
     <div class="settings-group">
       <div class="settings-group-title">Безопасность</div>
       <div class="settings-card">
-        <div class="settings-row" style="padding-top:0;"><span style="display:flex;align-items:center;gap:10px;"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--mut);"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>Защита паролем</span><div class="switch" id="swLock" onclick="toggleLock()"></div></div>
-      </div>
-      <div id="changePassWrap" style="display:none;margin-bottom:10px;">
-        <input type="password" id="newPass" placeholder="Пароль (мин. 4 симв.)" inputmode="numeric" style="width:100%;background:var(--card);border:1px solid var(--bd);border-radius:var(--r-md);padding:14px;color:var(--txt);font-size:15px;font-family:inherit;outline:none;margin-bottom:8px;">
-        <button class="settings-btn primary" onclick="savePassword()"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>Установить пароль</button>
+        <div class="settings-row" style="padding-top:0;">
+          <span style="display:flex;align-items:center;gap:10px;"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--mut);"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>PIN-код</span>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <button class="btn-pin-edit" id="btnChangePin" onclick="openPinChange('change')" style="display:none;" title="Изменить PIN">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            </button>
+            <div class="switch" id="swPin" onclick="togglePin()"></div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -231,7 +286,7 @@
       <div class="settings-group-title">Экспорт медиа</div>
       <div class="settings-card">
         <div class="settings-card-head with-divider"><div class="settings-icon-box"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></div><div><div class="settings-card-title">Все данные</div><div class="settings-card-sub">Файлы, папки и настройки</div></div></div>
-        <div style="font-size:12px;color:var(--mut);line-height:1.5;margin-bottom:10px;">Создает ZIP-архив со всеми файлами, папками, тегами и настройками. Используйте для переноса на другое устройство.</div>
+        <div style="font-size:12px;color:var(--mut);line-height:1.5;margin-bottom:10px;">Создает ZIP-архив со всеми файлами, папками и настройками.</div>
         <button class="settings-btn" style="margin-top:0;" onclick="exportAllData()"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Экспортировать всё</button>
       </div>
     </div>
@@ -248,18 +303,15 @@
 
     <div class="settings-group">
       <div class="settings-group-title">Опасная зона</div>
-      <div class="settings-card"><button class="settings-btn danger" style="margin-top:0;" onclick="hardResetDB()"><svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>Полный сброс</button></div>
+      <div class="settings-card">
+        <button class="settings-btn" style="margin-top:0;" onclick="resetSettings()"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>Сбросить настройки</button>
+      </div>
+      <div class="settings-card">
+        <button class="settings-btn danger" style="margin-top:0;" onclick="hardResetDB()"><svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>Полный сброс</button>
+      </div>
     </div>
 
     <div class="modal-btns" style="margin-top:20px;"><button onclick="document.getElementById('modalSettings').classList.remove('on')">Закрыть</button></div>
-  </div>
-</div>
-
-<div class="modal" id="modalTags">
-  <div class="box"><div class="drag-handle"></div><h3>Теги (<span id="tagCount">0</span> файлов)</h3>
-    <div style="display:flex; gap:8px; margin-bottom:16px;"><input type="text" id="tagInput" placeholder="Новый тег..." style="margin-bottom:0;"><button id="tagAddBtn" class="primary" style="width:auto; padding:0 20px; border-radius:12px; font-size:20px; display:flex;align-items:center;justify-content:center;"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button></div>
-    <div id="tagList" style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:20px; min-height:40px;"></div>
-    <div class="modal-btns"><button id="tagClose" class="primary">Готово</button></div>
   </div>
 </div>
 
@@ -269,6 +321,23 @@
 
 <div class="modal" id="modalCompressResult">
   <div class="box"><div class="drag-handle"></div><h3>Сжатие завершено</h3><div id="compressSummary" style="width:100%;margin-bottom:16px;text-align:center;"></div><div id="compressList" style="width:100%;max-height:45vh;overflow-y:auto;margin-bottom:16px;border:1px solid var(--bd);border-radius:12px;padding:8px;background:var(--card);"></div><div class="modal-btns" style="width:100%;"><button id="btnDoneCompress" class="primary">Отлично</button></div></div>
+</div>
+
+<div class="modal" id="modalPinChange">
+  <div class="box">
+    <div class="drag-handle"></div>
+    <h3 id="pinChangeTitle">Установить PIN</h3>
+    <div id="pinCurrentWrap" style="display:none;">
+      <input type="password" id="pinCurrent" inputmode="numeric" maxlength="4" placeholder="Текущий PIN" autocomplete="off">
+    </div>
+    <input type="password" id="pinNew" inputmode="numeric" maxlength="4" placeholder="Новый PIN (4 цифры)" autocomplete="off">
+    <input type="password" id="pinConfirm" inputmode="numeric" maxlength="4" placeholder="Повторите PIN" autocomplete="off">
+    <div id="pinChangeErr" style="color:var(--danger);font-size:13px;text-align:center;min-height:18px;margin-bottom:8px;font-weight:600;"></div>
+    <div class="modal-btns">
+      <button id="pinChangeCancel">Отмена</button>
+      <button id="pinChangeOk" class="primary">Готово</button>
+    </div>
+  </div>
 </div>
 
 <div id="customKeyboard" class="ck">
