@@ -15,7 +15,6 @@ const ICONS = {
   home: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>',
   trash: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
   folderIcon: '<svg viewBox="0 0 24 24" width="56" height="56" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" style="opacity:.5;"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>',
-  imageIcon: '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>',
   checkSmall: '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="var(--acc)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:6px;"><polyline points="20 6 9 17 4 12"/></svg>',
   trashSmall: '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="var(--mut)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:6px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
   xSmall: '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>'
@@ -41,7 +40,7 @@ let viewerToken = 0, slideToken = 0;
 let currentFilesCache = [], currentFoldersCache = [], allActiveFilesCache = [], allActiveFoldersCache = [], trashFilesCache = [], trashFoldersCache = [];
 let startX = 0, startY = 0, isScrolling = false;
 let scrollTimeout = null, scrollRaf = null;
-let editIsFolder = true, editId = null, moveMode = 'move';
+let editIsFolder = true, editId = null;
 let isDragSelecting = false, lastHoveredTile = null, lastDragTime = 0;
 let searchTimer = null;
 let lastScrollTime = 0;
@@ -52,12 +51,14 @@ let currentOperation = null, lastProgressUpdate = 0, _keepAliveTimer = null;
 
 const filePreviewCache = new Map();
 const folderPreviewCache = new Map();
+
 function cacheGetPreview(map, key) {
   const e = map.get(key);
   if (!e) return undefined;
   e.lastAccess = Date.now();
   return e.url;
 }
+
 function cacheSetPreview(map, key, url) {
   map.set(key, { url, lastAccess: Date.now() });
   if (map.size > PREVIEW_CACHE_MAX) {
@@ -70,10 +71,12 @@ function cacheSetPreview(map, key, url) {
     }
   }
 }
+
 function cacheRemovePreview(map, key) {
   const e = map.get(key);
   if (e) { try { URL.revokeObjectURL(e.url); } catch(_) {} map.delete(key); }
 }
+
 function cacheClearAll() {
   for (const [, v] of filePreviewCache) try { URL.revokeObjectURL(v.url); } catch(e) {}
   for (const [, v] of folderPreviewCache) try { URL.revokeObjectURL(v.url); } catch(e) {}
@@ -84,6 +87,7 @@ function cacheClearAll() {
 let virtualState = { items: [], cols: 3, rowHeight: 0, paddingTop: 16, lastRange: [-1, -1] };
 
 function initAudio() { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); if (audioCtx.state === 'suspended') audioCtx.resume(); }
+
 function playSound(type) {
   if (!soundEnabled) return; initAudio(); if (!audioCtx) return;
   const osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
@@ -106,12 +110,17 @@ window.toggleFolderPreview = async () => {
 };
 
 document.addEventListener('pointerdown', (e) => {
-  if (e.target.closest('button') || e.target.closest('.tab') || e.target.closest('.ctx-item') || e.target.closest('.theme-item') || e.target.closest('.font-opt') || e.target.closest('.pill') || e.target.closest('.settings-btn')) {
+  if (e.target.closest('button') || e.target.closest('.tab') || e.target.closest('.ctx-item') || e.target.closest('.theme-item') || e.target.closest('.pill') || e.target.closest('.settings-btn')) {
     if (!e.target.closest('.ck-key') && !e.target.closest('#confirmOk') && !e.target.closest('#confirmCancel')) playSound('click');
   }
 }, { passive: true });
 
-window.addEventListener('beforeunload', (e) => { if (currentOperation) { e.preventDefault(); e.returnValue = ''; return ''; } });
+window.addEventListener('beforeunload', (e) => {
+  if (currentOperation) {
+    e.preventDefault();
+    return '';
+  }
+});
 
 let settingsCache = null;
 async function getAllSettings() { if (settingsCache !== null) return settingsCache; const all = await p(st(SS, 'readonly').getAll()); settingsCache = {}; all.forEach(s => { settingsCache[s.key] = s.value; }); return settingsCache; }
@@ -177,20 +186,6 @@ function startAbortableOperation(type, title) { currentOperation = { type, title
 function endAbortableOperation() { currentOperation = null; $('progCancelBtn').style.display = 'none'; }
 function checkAbort() { if (currentOperation && currentOperation.abort) throw new Error('Отменено пользователем'); }
 $('progCancelBtn').onclick = () => { if (currentOperation && !currentOperation.abort) { currentOperation.abort = true; $('progTitle').textContent = 'Отмена...'; $('progCancelBtn').style.display = 'none'; } };
-
-async function checkFreeSpace(requiredBytes, label) {
-  if (!navigator.storage || !navigator.storage.estimate) return true;
-  try {
-    const est = await navigator.storage.estimate();
-    const quota = est.quota || 0, usage = est.usage || 0;
-    if (quota <= 0) return true;
-    const free = quota - usage;
-    if (free < requiredBytes * 1.15) {
-      return await showConfirm('Мало места', `${label}: свободно <b>${(free/1048576).toFixed(0)} МБ</b>, нужно <b>${(requiredBytes*1.15/1048576).toFixed(0)} МБ</b>.<br><br>Продолжить на свой риск?`, 'Продолжить', 'Отмена');
-    }
-    return true;
-  } catch(e) { return true; }
-}
 
 let pendingUndo = null;
 function toast(title, sub='', isError=false) {
@@ -535,24 +530,6 @@ async function extractEntryToBuffer(zipInfo, entry) {
 
 function sanitizeName(name) { return String(name || 'file').replace(/[\/\\:*?"<>|\x00-\x1f]/g, '_'); }
 
-async function extractExifDate(file) {
-  if (!file || !file.type.startsWith('image/')) return null;
-  if (file.size < 32) return null;
-  try {
-    const head = new Uint8Array(await file.slice(0, Math.min(file.size, 128 * 1024)).arrayBuffer());
-    if (head[0] === 0xFF && head[1] === 0xD8) {
-      const str = new TextDecoder('latin1').decode(head);
-      const m = str.match(/(\d{4})[:\-](\d{2})[:\-](\d{2})[ T](\d{2})[:\-](\d{2})[:\-](\d{2})/);
-      if (m) {
-        const ts = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
-        if (!isNaN(ts) && ts >= Date.UTC(1990) && ts <= Date.now() + 86400000) return ts;
-      }
-    }
-    if (file.lastModified && file.lastModified >= Date.UTC(1990) && file.lastModified <= Date.now() + 86400000) return file.lastModified;
-  } catch(e) {}
-  return null;
-}
-
 async function generateImageThumbnail(file, maxSize = 300) {
   if (typeof createImageBitmap === 'function') {
     try {
@@ -722,9 +699,7 @@ function computeGridLayout() {
   const wrap = $('gridWrap'); if (!wrap) return;
   const width = wrap.clientWidth;
   if (!width) return;
-  const colsStr = getComputedStyle(document.documentElement).getPropertyValue('--cols').trim();
-  const m = colsStr.match(/repeat\(\s*(\d+)/);
-  const cols = m ? parseInt(m[1]) : 3;
+  const cols = 3;
   const sidePad = 16, topPad = 16, gap = 10;
   const contentWidth = width - sidePad * 2;
   virtualState.cols = cols;
@@ -932,8 +907,7 @@ const getAllFolders = () => p(st(SFL,'readonly').getAll());
 
 async function addFile(file, hash) {
   const fileId = generateId(); const type = detectType(file);
-  const exifDate = (type === 'image') ? await extractExifDate(file) : null;
-  const record = { fileId, name: file.name || 'Файл', type, mime: file.type||'', size: file.size, date: exifDate || Date.now(), importedAt: Date.now(), folderId: currentFolder, hash, deleted: false, deletedAt: null, fav: false, tags: [] };
+  const record = { fileId, name: file.name || 'Файл', type, mime: file.type||'', size: file.size, date: Date.now(), importedAt: Date.now(), folderId: currentFolder, hash, deleted: false, deletedAt: null, fav: false, tags: [] };
   if (!rootDir) { record.blob = file; return p(st(SF, 'readwrite').add(record)); }
   const success = await saveToOPFSChunked(fileId, file);
   if (!success) throw new Error("Не удалось сохранить файл.");
@@ -1080,78 +1054,6 @@ window.openDupGallery = async (fileIds, clickedId) => {
   $('viewerDelete').style.display = 'flex';
   renderViewer();
 };
-
-async function compactDB() {
-  if (!await showConfirm('Сжатие базы', 'Очистить корзину, удалить "осиротевшие" файлы и пересобрать базу?')) return;
-  await acquireWakeLock();
-  showProgress('Очистка', 0, 'Анализ данных...', '', true);
-  try {
-    let files = await getAllFiles(); let folders = await getAllFolders();
-    const settings = await p(st(SS,'readonly').getAll());
-    const trashedFiles = files.filter(f => f.deleted);
-    if (trashedFiles.length > 0) {
-      showProgress('Очистка', 15, 'Удаление корзины...', '');
-      for (const f of trashedFiles) { await deleteFromOPFS(f.fileId); await deleteThumb(f.fileId); }
-      const t = db.transaction(SF,'readwrite'), s = t.objectStore(SF);
-      trashedFiles.forEach(f => s.delete(f.id));
-      await new Promise(r => setTimeout(r, 200));
-      files = files.filter(f => !f.deleted);
-    }
-    const trashedFolders = folders.filter(f => f.deleted);
-    if (trashedFolders.length > 0) {
-      const trashedFolderIds = new Set(trashedFolders.map(f => f.id));
-      let ch = true;
-      while (ch) { ch = false; for (const f of folders) if (f.deleted && f.parentId != null && trashedFolderIds.has(f.parentId) && !trashedFolderIds.has(f.id)) { trashedFolderIds.add(f.id); ch = true; } }
-      const orphanFiles = files.filter(f => trashedFolderIds.has(f.folderId));
-      for (const f of orphanFiles) { await deleteFromOPFS(f.fileId); await deleteThumb(f.fileId); }
-      const tFo = db.transaction(SF, 'readwrite'), sFo = tFo.objectStore(SF);
-      orphanFiles.forEach(f => sFo.delete(f.id));
-      await new Promise((res, rej) => { tFo.oncomplete = res; tFo.onerror = e => rej(e.target.error); });
-      files = files.filter(f => !trashedFolderIds.has(f.folderId));
-      const tf = db.transaction(SFL,'readwrite'), sf = tf.objectStore(SFL);
-      trashedFolderIds.forEach(id => sf.delete(id));
-      await new Promise(r => setTimeout(r, 200));
-      folders = folders.filter(f => !f.deleted);
-    }
-    const validFolderIds = new Set(folders.map(f => f.id));
-    const trueOrphans = files.filter(f => f.folderId != null && !validFolderIds.has(f.folderId));
-    if (trueOrphans.length > 0) {
-      showProgress('Очистка', 30, `Осиротевшие: ${trueOrphans.length}...`, '');
-      for (const f of trueOrphans) { await deleteFromOPFS(f.fileId); await deleteThumb(f.fileId); }
-      const tOr = db.transaction(SF, 'readwrite'), sOr = tOr.objectStore(SF);
-      trueOrphans.forEach(f => sOr.delete(f.id));
-      await new Promise((res, rej) => { tOr.oncomplete = res; tOr.onerror = e => rej(e.target.error); });
-      files = files.filter(f => f.folderId == null || validFolderIds.has(f.folderId));
-    }
-    if (rootDir) {
-      showProgress('Очистка', 40, 'Удаление лишних файлов...', '');
-      const validFileIds = new Set(files.map(f => f.fileId));
-      try {
-        const toRemove = [];
-        for await (const name of rootDir.keys()) {
-          if (name.startsWith(THUMB_PREFIX)) { const fid = name.substring(THUMB_PREFIX.length); if (!validFileIds.has(fid)) toRemove.push(name); continue; }
-          if (!validFileIds.has(name)) toRemove.push(name);
-        }
-        for (const name of toRemove) { try { await rootDir.removeEntry(name); } catch(e) {} }
-      } catch(e) { console.warn('OPFS cleanup err', e); }
-    }
-    showProgress('Очистка', 60, 'Пересборка IndexedDB...', '');
-    db.close();
-    await new Promise((res, rej) => { const req = indexedDB.deleteDatabase(DB_NAME); req.onsuccess = res; req.onerror = rej; req.onblocked = () => res(); });
-    showProgress('Очистка', 80, 'Восстановление...', '');
-    await openDB();
-    settingsCache = null;
-    const t1 = db.transaction(SF,'readwrite'), s1 = t1.objectStore(SF); files.forEach(f => s1.put(f));
-    const t2 = db.transaction(SFL,'readwrite'), s2 = t2.objectStore(SFL); folders.forEach(f => s2.put(f));
-    const t3 = db.transaction(SS,'readwrite'), s3 = t3.objectStore(SS); settings.forEach(s => s3.put(s));
-    await new Promise(r => setTimeout(r, 500));
-    cacheClearAll();
-    virtualState.lastRange = [-1,-1];
-    hideProgress(); refresh(); toast('Успешно', 'Мусор удален, база сжата');
-  } catch(e) { hideProgress(); toast('Ошибка', 'Не удалось', true); }
-  finally { releaseWakeLock(); }
-}
-window.compactDB = compactDB;
 
 window.hardResetDB = async () => {
   if(!await showConfirm('ВНИМАНИЕ!', 'Все данные будут <b>удалены навсегда</b>. Продолжить?', 'Удалить', 'Отмена')) return;
@@ -1407,17 +1309,6 @@ async function getFolderStats(folderId) {
   return { size, count, folderCount: folderIds.size - 1 };
 }
 
-async function updateStatistics() {
-  try {
-    const [files, folders] = await Promise.all([getAllFiles(), getAllFolders()]);
-    const photos = files.filter(f => f.type === 'image').length, videos = files.filter(f => f.type === 'video').length;
-    const favs = files.filter(f => f.fav && !f.deleted).length;
-    const trashCount = files.filter(f => f.deleted).length + folders.filter(f => f.deleted).length;
-    const e1 = $('statTotalFiles'), e2 = $('statMediaFiles'), e3 = $('statFolders'), e4 = $('statFavorites'), e5 = $('statTrash');
-    if (e1) e1.textContent = files.length; if (e2) e2.textContent = `${photos} / ${videos}`; if (e3) e3.textContent = folders.length; if (e4) e4.textContent = favs; if (e5) e5.textContent = trashCount;
-  } catch(e) {}
-}
-
 function renderCrumb(folders) {
   if (viewMode === 'trash') { $('crumb').innerHTML = `<a class="cur">${ICONS.trash}Корзина</a>`; return; }
   if (searchScope === 'all' && searchQuery) { $('crumb').innerHTML = `<a data-nav="root" class="cur">${ICONS.home}Поиск везде</a>`; return; }
@@ -1444,6 +1335,8 @@ function sortList(arr) {
     if(sortBy==='date_asc') return a.date-b.date;
     if(sortBy==='size_desc') return (b.size||0)-(a.size||0);
     if(sortBy==='size_asc') return (a.size||0)-(b.size||0);
+    if(sortBy==='added_asc') return (a.id||0)-(b.id||0);
+    if(sortBy==='added_desc') return (b.id||0)-(a.id||0);
     return 0;
   });
 }
@@ -1745,16 +1638,15 @@ function openMoveModal(title, btnText) {
     $('modalMove').classList.add('on');
   });
 }
-$('ctxMove').onclick = () => { if (!(sel.size + folderSel.size)) return; moveMode = 'move'; openMoveModal('Переместить в…', 'Переместить'); };
-$('ctxCopy').onclick = () => { if (!(sel.size + folderSel.size)) return; moveMode = 'copy'; openMoveModal('Копировать в…', 'Копировать'); };
+$('ctxMove').onclick = () => { if (!(sel.size + folderSel.size)) return; openMoveModal('Переместить в…', 'Переместить'); };
 $('mvCancel').onclick = () => $('modalMove').classList.remove('on');
 $('mvOk').onclick = async () => {
   const target = moveTarget === 'ROOT' ? null : moveTarget;
   try {
-    if (moveMode === 'move') { if (sel.size) await moveFiles([...sel], target); if (folderSel.size) await moveFolders([...folderSel], target); }
-    else { if (sel.size) await copyFiles([...sel], target); if (folderSel.size) await copyFoldersDeep([...folderSel], target); }
+    if (sel.size) await moveFiles([...sel], target);
+    if (folderSel.size) await moveFolders([...folderSel], target);
     clearSel(); $('modalMove').classList.remove('on'); await refresh();
-    toast(moveMode === 'move' ? 'Перемещено' : 'Скопировано', '');
+    toast('Перемещено', '');
   } catch(e) { toast('Ошибка', e.message || 'Не удалось', true); }
 };
 
@@ -1764,54 +1656,6 @@ async function moveFolders(ids, target) {
   for (const id of ids) { let cur = target; while (cur != null) { if (cur === id) throw new Error('Нельзя переместить папку внутрь неё самой'); const f = byId.get(cur); cur = f ? f.parentId : null; } }
   const s=st(SFL,'readwrite');
   for(const id of ids){ const v=await p(s.get(id)); if(v){ v.parentId=target; await p(s.put(v)); } }
-}
-
-async function copyOneFile(srcFile, targetFolderId) {
-  const newFileId = generateId();
-  if (rootDir) {
-    try {
-      const data = await getFromOPFS(srcFile.fileId);
-      if (data) { const fh = await rootDir.getFileHandle(newFileId, { create: true }); const wr = await fh.createWritable(); await wr.write(data); await wr.close(); }
-      else if (srcFile.blob) { const fh = await rootDir.getFileHandle(newFileId, { create: true }); const wr = await fh.createWritable(); await wr.write(srcFile.blob); await wr.close(); }
-    } catch(e) { console.warn('Copy file failed', srcFile.name, e); }
-    try {
-      const fh = await rootDir.getFileHandle(THUMB_PREFIX + srcFile.fileId);
-      const thumb = await fh.getFile();
-      await saveThumb(newFileId, thumb);
-    } catch(e) {}
-  }
-  const { id, ...rest } = srcFile;
-  const rec = { ...rest, fileId: newFileId, folderId: targetFolderId, importedAt: Date.now() };
-  return await p(st(SF, 'readwrite').add(rec));
-}
-
-async function copyFiles(ids, targetFolderId) {
-  const files = await getAllFiles();
-  const toCopy = files.filter(f => ids.includes(f.id) && !f.deleted);
-  if (!toCopy.length) return;
-  showProgress('Копирование', 0, '', '', true);
-  let done = 0;
-  for (const f of toCopy) { await copyOneFile(f, targetFolderId); done++; showProgress('Копирование', Math.round(done / toCopy.length * 100), f.name, `${done}/${toCopy.length}`); }
-  hideProgress();
-}
-
-async function copyFoldersDeep(ids, targetFolderId) {
-  const allFolders = await getAllFolders(); const allFiles = await getAllFiles();
-  const byParent = new Map(), filesByFolder = new Map();
-  for (const f of allFolders) { const k = f.parentId ?? null; if (!byParent.has(k)) byParent.set(k, []); byParent.get(k).push(f); }
-  for (const f of allFiles) { const k = f.folderId ?? null; if (!filesByFolder.has(k)) filesByFolder.set(k, []); filesByFolder.get(k).push(f); }
-  let total = 0;
-  const countFolder = (fid) => { total += (filesByFolder.get(fid) || []).filter(f => !f.deleted).length; for (const s of (byParent.get(fid) || [])) if (!s.deleted) countFolder(s.id); };
-  for (const id of ids) countFolder(id);
-  let done = 0;
-  showProgress('Копирование', 0, '', `${done}/${total}`, true);
-  async function recurse(src, parentId) {
-    const newFid = await addFolder(src.name, parentId, src.color);
-    for (const f of (filesByFolder.get(src.id) || []).filter(f => !f.deleted)) { await copyOneFile(f, newFid); done++; showProgress('Копирование', Math.round(done / Math.max(1, total) * 100), f.name, `${done}/${total}`); }
-    for (const s of (byParent.get(src.id) || [])) if (!s.deleted) await recurse(s, newFid);
-  }
-  for (const id of ids) { const f = allFolders.find(x => x.id === id); if (f && !f.deleted) await recurse(f, targetFolderId); }
-  hideProgress();
 }
 
 $('ctxDel').onclick = async () => {
@@ -1921,8 +1765,6 @@ $('ctxDownload').onclick = async () => {
     }
     for (const f of selectedFiles) { if (addedFileIds.has(f.id)) continue; addedFileIds.add(f.id); rawItems.push({ zipPath: sanitizeName(f.name || `file_${f.id}`), file: f }); }
     if (rawItems.length === 0) return toast('Пусто', 'Нет файлов для экспорта', true);
-    const totalBytes = rawItems.reduce((s, it) => s + (it.file.size || 0), 0);
-    if (!await checkFreeSpace(totalBytes * 1.05, 'Экспорт')) return;
     const usedPaths = new Set(); const finalItems = [];
     for (const item of rawItems) {
       let up = item.zipPath;
@@ -1993,14 +1835,12 @@ $('tagClose').onclick = () => { $('modalTags').classList.remove('on'); clearSel(
 $('btnSort').onclick = () => { document.querySelectorAll('#modalSort .list-item').forEach(el=>{ el.style.background = el.dataset.sort===sortBy ? 'var(--bd)' : 'transparent'; }); $('modalSort').classList.add('on'); };
 window.setSort = v => { sortBy=v; $('modalSort').classList.remove('on'); renderGrid(true); };
 window.setTheme = async name => { document.body.dataset.theme=name; await setSetting('theme',name); document.querySelectorAll('.theme-item').forEach(el=>el.classList.toggle('sel', el.dataset.t===name)); };
-window.setCols = async cols => { document.documentElement.style.setProperty('--cols',cols); await setSetting('cols',cols); document.querySelectorAll('.font-opt[data-c]').forEach(el=>el.classList.toggle('sel', el.dataset.c===cols)); virtualState.lastRange = [-1,-1]; renderGrid(true); };
 async function loadTheme() {
   const s = await getAllSettings();
   let t = s.theme || 'dark';
-  const ALLOWED = ['dark', 'light', 'warm', 'sepia'];
+  const ALLOWED = ['dark', 'light'];
   if (!ALLOWED.includes(t)) t = 'dark';
-  const c = s.cols || 'repeat(3, 1fr)';
-  await setTheme(t); await setCols(c);
+  await setTheme(t);
   const savedSlideshowMs = Number(s.slideshowInterval ?? DEFAULT_SLIDESHOW_MS);
   slideshowInterval = savedSlideshowMs;
   const sec = Math.round(savedSlideshowMs / 1000);
@@ -2014,7 +1854,7 @@ async function loadTheme() {
   folderPreviewEnabled = s.folderPreviewEnabled !== false;
   if ($('swFolderPreview')) $('swFolderPreview').classList.toggle('on', folderPreviewEnabled);
 }
-$('btnSettings').onclick = async () => { $('modalSettings').classList.add('on'); await updateStorageInfo(); await updateStatistics(); updateTrashAutoPillsUI(await getTrashAutoDays()); };
+$('btnSettings').onclick = async () => { $('modalSettings').classList.add('on'); await updateStorageInfo(); updateTrashAutoPillsUI(await getTrashAutoDays()); };
 
 window.exportAllData = async () => {
   if (!await showConfirm('Экспорт', 'Создать полный архив со всеми файлами, папками и настройками?<br><br>Файлы стримятся на диск — поддерживаются любые объёмы (50+ ГБ).', 'Экспорт', 'Отмена')) return;
@@ -2023,8 +1863,6 @@ window.exportAllData = async () => {
     const [files, folders, settings] = await Promise.all([getAllFiles(), getAllFolders(), p(st(SS, 'readonly').getAll())]);
     const d = new Date(); const pad = n => String(n).padStart(2, '0');
     const zipName = `mediavault_backup_${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}.zip`;
-    const totalBytes = files.reduce((s, f) => s + (f.size || 0), 0);
-    if (!await checkFreeSpace(totalBytes * 1.05, 'Экспорт')) return;
     showProgress('Экспорт', 0, 'Открытие файла...', '', true);
     stream = await createOutputStream(zipName);
     if (!stream) return toast('Ошибка', 'Браузер не поддерживает потоковую запись в файл. Используйте APK-версию.', true);
@@ -2046,7 +1884,6 @@ const ARCHIVE_MIME_MAP = { jpg:'image/jpeg', jpeg:'image/jpeg', png:'image/png',
 window.importFromArchive = async (input) => {
   const file = input.files[0]; if (!file) return; input.value = '';
   const t0 = performance.now();
-  if (!await checkFreeSpace(file.size * 1.2, 'Импорт')) return;
   startAbortableOperation('import', 'Импорт');
   showProgress('Импорт', 0, 'Чтение архива...', `${(file.size / 1048576).toFixed(0)} МБ`, true);
   await nextMacrotask();
@@ -2071,7 +1908,6 @@ window.importFromArchive = async (input) => {
         const basePath = metadataEntry.name.substring(0, metadataEntry.name.length - 'metadata.json'.length);
         const entryMap = new Map(zipInfo.entries.map(e => [e.name, e]));
         
-        // Ищем только те файлы, которые реально существуют в архиве
         const validFiles = metadata.files.filter(f => entryMap.has(basePath + `files/${f.fileId}`));
         const missingCount = metadata.files.length - validFiles.length;
 
@@ -2137,8 +1973,7 @@ window.importFromArchive = async (input) => {
           if (isDuplicate) { await deleteFromOPFS(fileId); skipped++; }
           else {
             const fileObj = await getFromOPFS(fileId); const type = detectType(fileObj);
-            const exifDate = (type === 'image' && fileObj) ? await extractExifDate(fileObj) : null;
-            const record = { fileId, name: fileName, type, mime, size: entry.uncompSize, date: exifDate || Date.now(), importedAt: Date.now(), folderId: targetFolderId, hash, deleted: false, deletedAt: null, fav: false, tags: [] };
+            const record = { fileId, name: fileName, type, mime, size: entry.uncompSize, date: Date.now(), importedAt: Date.now(), folderId: targetFolderId, hash, deleted: false, deletedAt: null, fav: false, tags: [] };
             pendingRecords.push(record); importedFiles.push(record);
             if (hash && !hash.startsWith('unique_')) existingHashes.add(hash);
             sizesInDb.add(entry.uncompSize); imported++;
@@ -2168,7 +2003,6 @@ window.importFromArchive = async (input) => {
       const basePath = metadataEntry.name.substring(0, metadataEntry.name.length - 'metadata.json'.length);
       const entryMap = new Map(entries.map(e => [e.name, e]));
       
-      // Ищем только те файлы, которые реально существуют в архиве
       const validFiles = metadata.files.filter(f => entryMap.has(basePath + `files/${f.fileId}`));
       const missingCount = metadata.files.length - validFiles.length;
 
@@ -2231,8 +2065,7 @@ window.importFromArchive = async (input) => {
         if (isDuplicate) { skipped++; }
         else {
           const fileId = generateId(); const type = detectType(fileObj);
-          const exifDate = (type === 'image') ? await extractExifDate(fileObj) : null;
-          const record = { fileId, name: fileName, type, mime, size: entry.data.length, date: exifDate || Date.now(), importedAt: Date.now(), folderId: targetFolderId, hash, deleted: false, deletedAt: null, fav: false, tags: [] };
+          const record = { fileId, name: fileName, type, mime, size: entry.data.length, date: Date.now(), importedAt: Date.now(), folderId: targetFolderId, hash, deleted: false, deletedAt: null, fav: false, tags: [] };
           if (rootDir) { const ok = await writeDataToOPFS(fileId, entry.data); if (!ok) failed++; else { pendingRecords.push(record); importedFiles.push(record); if (hash && !hash.startsWith('unique_')) existingHashes.add(hash); sizesInDb.add(entry.data.length); imported++; if (pendingRecords.length >= FLUSH_SIZE) await flushBatch(); } }
           else { record.blob = fileObj; pendingRecords.push(record); importedFiles.push(record); if (hash && !hash.startsWith('unique_')) existingHashes.add(hash); sizesInDb.add(entry.data.length); imported++; if (pendingRecords.length >= FLUSH_SIZE) await flushBatch(); }
         }
@@ -2349,7 +2182,7 @@ document.addEventListener('pointerdown', (e) => { if (!ckTarget) return; if (e.t
 
 document.querySelectorAll('.modal:not(.custom-confirm) .box').forEach(box => {
   let sy = 0, cy = 0, dragging = false;
-  box.addEventListener('touchstart', (e) => { if (e.target.closest('input, button, select, textarea, .ck, .font-opt, .theme-item, .list-item, .settings-btn')) return; if (box.scrollTop > 0) return; sy = e.touches[0].clientY; dragging = true; box.style.transition = 'none'; }, { passive: true });
+  box.addEventListener('touchstart', (e) => { if (e.target.closest('input, button, select, textarea, .ck, .theme-item, .list-item, .settings-btn')) return; if (box.scrollTop > 0) return; sy = e.touches[0].clientY; dragging = true; box.style.transition = 'none'; }, { passive: true });
   box.addEventListener('touchmove', (e) => { if (!dragging) return; cy = e.touches[0].clientY; const dy = cy - sy; if (dy > 0 && box.scrollTop === 0) { if (e.cancelable) e.preventDefault(); box.style.transform = `translateY(${dy}px)`; } else if (dy < 0) { dragging = false; box.style.transform = ''; box.style.transition = ''; } }, { passive: false });
   box.addEventListener('touchend', () => { if (!dragging) return; dragging = false; const dy = cy - sy; box.style.transition = 'transform 0.3s cubic-bezier(0.32, 0.72, 0, 1)'; if (dy > 100) { box.style.transform = 'translateY(100%)'; setTimeout(() => { box.closest('.modal').classList.remove('on'); box.style.transform = ''; box.style.transition = ''; }, 300); } else { box.style.transform = 'translateY(0)'; setTimeout(() => { box.style.transition = ''; }, 300); } sy = 0; cy = 0; });
   box.addEventListener('touchcancel', () => { dragging = false; box.style.transform = ''; box.style.transition = ''; sy = 0; cy = 0; });
